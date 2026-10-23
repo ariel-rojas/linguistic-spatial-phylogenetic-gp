@@ -1,0 +1,19 @@
+{
+  "name": "spherical_spline",
+  "spatial_kernel": "spherical_spline",
+  "max_degree": 16,
+  "smoothing": 0.001,
+  "spatial_variance": 1.0,
+  "phylogenetic_rate": 0.008,
+  "test_fraction": 0.2,
+  "seed": 42,
+  "test_family": "indo1319",
+  "cv_folds": 3,
+  "phylogeny_manifest": "datos/phylogeny/manifest.json",
+  "grid": {
+    "max_degree": [8, 16, 32],
+    "smoothing": [0.00001, 0.0001, 0.001, 0.01],
+    "spatial_variance": [0.25, 1, 4],
+    "phylogenetic_rate": [0.002, 0.008, 0.032]
+  }
+}

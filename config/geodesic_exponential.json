@@ -1,0 +1,17 @@
+{
+  "name": "geodesic_exponential",
+  "spatial_kernel": "geodesic_exponential",
+  "length_scale_km": 1500,
+  "spatial_variance": 1.0,
+  "phylogenetic_rate": 0.008,
+  "test_fraction": 0.2,
+  "seed": 42,
+  "test_family": "indo1319",
+  "cv_folds": 3,
+  "phylogeny_manifest": "datos/phylogeny/manifest.json",
+  "grid": {
+    "length_scale_km": [250, 500, 1000, 1500, 3000, 6000],
+    "spatial_variance": [0.25, 0.5, 1, 2, 4, 8],
+    "phylogenetic_rate": [0.002, 0.008, 0.032]
+  }
+}

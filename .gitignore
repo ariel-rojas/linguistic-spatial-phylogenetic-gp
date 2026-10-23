@@ -1,0 +1,31 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Cachés de herramientas
+.ruff_cache/
+*.part
+
+# Datos fuente descargados y resultados reproducibles (no publicar por defecto)
+datos/
+results/*
+!results/README.md
+tmp/
+
+# Informe histórico local con rutas a resultados no publicados
+docs/phylogenetic_report.md
+docs/images/map.jpg
+
+# Credenciales y configuraciones locales
+.env
+.env.*
+!.env.example
+credentials.json
+secrets.*

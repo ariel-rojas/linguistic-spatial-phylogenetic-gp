@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Lenguas · Predicción e incertidumbre</title>
+    <style>
+      __STYLE__
+    </style>
+  </head>
+  <body>
+    <header>
+      <a href="map.html">← Volver al mapa</a>
+      <h1>Predicción e incertidumbre</h1>
+      <p>
+        Una clase predicha resume muchas explicaciones posibles. Explorá qué
+        sabemos de cada lengua y qué sigue siendo incierto.
+      </p>
+      <div id="warning" role="status"></div>
+    </header>
+    <main>
+      <aside>
+        <label for="scope">Casos disponibles</label
+        ><select id="scope">
+          <option value="imputation">
+            Imputaciones · etiqueta desconocida
+          </option>
+          <option value="evaluation">Test · etiqueta reservada</option></select
+        ><label for="search">Buscar lengua o código WALS</label
+        ><input
+          id="search"
+          type="search"
+          placeholder="Ej.: Guaraní o gua"
+        /><label for="cases">Seleccionar lengua</label
+        ><select id="cases" size="12"></select>
+        <p id="count" class="muted"></p>
+        <p>
+          Los casos de test usan el ajuste de train. Las imputaciones usan el
+          ajuste final con todos los observados.
+        </p>
+      </aside>
+      <article>
+        <details class="panel" id="workflowPanel">
+          <summary>
+            Entender el modelo: priors, rangos, datos y evaluación
+          </summary>
+          <p>
+            Información de la ejecución que produjo estas predicciones. Abrí
+            esta guía para seguir el recorrido completo.
+          </p>
+          <div id="workflow"></div>
+        </details>
+        <h2 id="language"></h2>
+        <p id="metadata" class="muted"></p>
+        <nav aria-label="Vistas">
+          <button id="localTab" aria-pressed="true">Esta lengua</button
+          ><button id="globalTab" aria-pressed="false">
+            Parámetros del ajuste
+          </button>
+        </nav>
+        <section id="local">
+          <div class="panel">
+            <h3>1. Predicción final: ¿qué clase es más probable?</h3>
+            <p>
+              Distribución predictiva categórica: promedio de las probabilidades
+              sobre las muestras posteriores. Las tres barras suman 100 %.
+            </p>
+            <div id="prediction"></div>
+          </div>
+          <div class="panel">
+            <h3>2. ¿Cuánta incertidumbre hay sobre cada probabilidad?</h3>
+            <p>
+              Cada muestra posterior propone una probabilidad distinta. Los
+              histogramas muestran cómo se distribuyen esas propuestas;
+              <strong>no cuentan hablantes ni lenguas</strong>.
+            </p>
+            <p class="muted">
+              Eje horizontal: probabilidad de la clase (0–100 %). Altura:
+              porcentaje de muestras en cada intervalo. Línea oscura: media;
+              franja sombreada: intervalo creíble puntual del 95 %.
+            </p>
+            <div id="probabilities" class="grid"></div>
+            <p id="sampleCount"></p>
+          </div>
+          <div class="panel">
+            <h3>
+              3. ¿Cuánto cambia esta predicción al retirar cada componente?
+            </h3>
+            <p>
+              Comparamos las probabilidades del modelo completo con dos
+              escenarios: uno sin efecto espacial y otro sin efecto
+              filogenético. Cada valor mide la sensibilidad de esta predicción.
+              No es un peso que el modelo estime ni una causa del orden
+              lingüístico.
+            </p>
+            <p class="muted">
+              Escala de 0 a 100 %: cambio total de probabilidad entre el modelo
+              completo y el escenario sin ese efecto. Una cifra alta indica que
+              retirarlo cambia más la predicción. Ambos efectos pueden ser
+              importantes a la vez.
+            </p>
+            <div id="componentInfluence" class="grid"></div>
+          </div>
+          <details class="panel">
+            <summary>Cómo leer estas dos vistas</summary>
+            <p>
+              Una predicción OV del 70 % puede venir de muestras casi siempre
+              cercanas al 70 %, o de muestras muy dispersas. La barra final
+              resume ambas situaciones igual; el histograma permite
+              distinguirlas.
+            </p>
+            <p>
+              El intervalo es de la probabilidad, no de una etiqueta numérica.
+              Los tres intervalos marginales no tienen por qué sumar 100 %. «Sin
+              dominante» es una clase lingüística, no una medida de duda.
+            </p>
+            <p>
+              Las distribuciones integran parámetros y tendencias latentes,
+              incluyendo el residual condicional en lenguas nuevas. No integran
+              árboles alternativos, errores de WALS ni otras familias de kernel.
+            </p>
+          </details>
+        </section>
+        <section id="global" hidden>
+          <div class="panel">
+            <h3>Parámetros compartidos por el ajuste</h3>
+            <p id="stageNote"></p>
+            <p>
+              Estas distribuciones son globales: no se estima una amplitud
+              diferente para cada lengua. Las dos amplitudes son desviaciones
+              estándar; sus cuadrados multiplican las correlaciones.
+            </p>
+            <div id="parameters" class="grid"></div>
+          </div>
+          <div class="panel">
+            <h3>Diagnósticos del muestreo</h3>
+            <div id="diagnostics"></div>
+            <p>
+              Las trazas de las amplitudes y del suavizado muestran cada cadena
+              sin warmup (hasta 200 puntos por cadena). Los diagnósticos se
+              calculan con todas las muestras y todos los coeficientes.
+            </p>
+          </div>
+        </section>
+        <details class="panel">
+          <summary>Qué contiene una muestra posterior</summary>
+          <p>
+            La notación «amplitudes + suavizado + interceptos + F» enumeraba
+            componentes: no significaba que todos esos objetos se suman.
+          </p>
+          <p>
+            <strong>Amplitudes:</strong> multiplican la variación espacial y
+            filogenética. <strong>Suavizado:</strong> regula el detalle de la
+            superficie espacial. <strong>Interceptos:</strong> tendencias
+            globales. <strong>F:</strong> tabla de desviaciones por lengua
+            generada a partir de los componentes espacial y filogenético.
+          </p>
+          <p>
+            Lo que sí se suma es: intercepto + efecto espacial + efecto
+            filogenético. Luego se convierten los dos contrastes en tres
+            puntuaciones y se aplica softmax. F<sup>(s)</sup> es la tabla
+            correspondiente a la muestra s; s no es una potencia.
+          </p>
+        </details>
+      </article>
+    </main>
+    <script id="data" type="application/json">
+      __DATA__
+    </script>
+    <script>
+      __SCRIPT__;
+    </script>
+  </body>
+</html>

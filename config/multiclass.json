@@ -1,0 +1,35 @@
+{
+  "name": "phylogenetic_mcc",
+  "length_scale_km": 1500,
+  "spatial_variance": 1.0,
+  "test_fraction": 0.2,
+  "seed": 42,
+  "test_family": "indo1319",
+  "cv_folds": 3,
+  "grid": {
+    "length_scale_km": [
+      500,
+      1500,
+      3000,
+      6000
+    ],
+    "spatial_variance": [
+      0.25,
+      1,
+      4
+    ],
+    "nu": [
+      0.5,
+      1.5,
+      2.5
+    ],
+    "phylogenetic_rate": [
+      0.002,
+      0.008,
+      0.032
+    ]
+  },
+  "nu": 0.5,
+  "phylogenetic_rate": 0.008,
+  "phylogeny_manifest": "datos/phylogeny/manifest.json"
+}

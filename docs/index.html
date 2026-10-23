@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Procesos gaussianos para datos lingüísticos</title>
+  <style>
+    :root { color-scheme: light; --ink:#17324d; --blue:#176b87; --paper:#f3f7fa; --line:#d8e2e9; }
+    body { margin:0; color:var(--ink); font:16px/1.6 system-ui,sans-serif; background:var(--paper); }
+    header { padding:48px max(24px,calc((100% - 1050px)/2)); color:white; background:#17324d; }
+    header p { max-width:780px; color:#d7e8f2; }
+    main { max-width:1050px; margin:28px auto; padding:0 20px 56px; }
+    section,.step { background:white; border:1px solid var(--line); border-radius:14px; padding:20px; margin:16px 0; }
+    .flow { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+    .step { margin:0; }
+    .step strong { display:block; color:var(--blue); }
+    a { color:#075b83; }
+    .links { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; }
+    .links a { display:block; padding:15px; background:#edf5f8; border-radius:10px; text-decoration:none; }
+    @media(max-width:700px){.flow{grid-template-columns:1fr 1fr} header{padding:30px 22px}}
+    @media(max-width:420px){.flow{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<header>
+  <h1>Imputación lingüística con modelos gaussianos</h1>
+  <p>Un proyecto reproducible para estudiar OV, VO y «Sin dominante» combinando estructura espacial y parentesco lingüístico. Esta página explica los datos, el modelo y cómo explorar el código.</p>
+</header>
+<main>
+  <section>
+    <h2>El recorrido de los datos</h2>
+    <div class="flow" aria-label="Flujo desde las fuentes hasta la predicción">
+      <div class="step"><strong>1 · Fuentes</strong>WALS: valores, coordenadas y faltantes. LOW/Glottolog: identidades y familias. MCC: árbol y tiempos.</div>
+      <div class="step"><strong>2 · Preparación</strong>Normalizar identidades, auditar coincidencias y ordenar las matrices para que cada fila sea la misma lengua.</div>
+      <div class="step"><strong>3 · Dependencias</strong>Crear correlación espacial y covarianza filogenética; convertir cada una en efectos latentes correlacionados.</div>
+      <div class="step"><strong>4 · Ajuste</strong>Las etiquetas conocidas informan las amplitudes, suavizado, interceptos y campos latentes.</div>
+      <div class="step"><strong>5 · Evaluación</strong>Reservar lenguas de forma estratificada y agrupada; medir test que no participó en el ajuste.</div>
+      <div class="step"><strong>6 · Imputación</strong>Ajustar con todos los valores observados y generar distribuciones predictivas para los faltantes.</div>
+      <div class="step"><strong>7 · Revisión</strong>Ver probabilidades e incertidumbre; revisar diagnósticos y no tratar predicciones como observaciones.</div>
+    </div>
+  </section>
+  <section>
+    <h2>Guías</h2>
+    <div class="links">
+      <a href="workflow.html"><strong>Workflow y matemáticas</strong><br>De las matrices de covarianza a las predicciones.</a>
+      <a href="research.html"><strong>Literatura y alternativas</strong><br>Procesos gaussianos, múltiples features y polígonos.</a>
+      <a href="pipeline.html"><strong>Datos y comandos</strong><br>Cómo preparar fuentes y ejecutar el análisis.</a>
+      <a href="bayesian_inference.html"><strong>Flujo bayesiano</strong><br>Priors, NUTS, predicción e incertidumbre.</a>
+      <a href="evaluation.html"><strong>Evaluación</strong><br>Separación, métricas e interpretación.</a>
+      <a href="phylogeny.html"><strong>Componente filogenética</strong><br>Árbol MCC, familias y matriz de covarianza.</a>
+    </div>
+  </section>
+  <section>
+    <h2>Código fuente</h2>
+    <p>El análisis vive en <code>src/gaussian_processes/</code>. Separa preparación de datos, componentes del kernel, inferencia bayesiana, evaluación y visualización.</p>
+    <ul>
+      <li><a href="{{ site.github.repository_url }}/tree/main/src/gaussian_processes/bayesian">Inferencia bayesiana</a></li>
+      <li><a href="{{ site.github.repository_url }}/tree/main/src/gaussian_processes/models">Kernel y modelos</a></li>
+      <li><a href="{{ site.github.repository_url }}/tree/main/src/gaussian_processes/evaluation">Evaluación</a></li>
+      <li><a href="{{ site.github.repository_url }}/tree/main/config">Configuración de experimentos</a></li>
+    </ul>
+    <p>Los datos fuente descargados y los resultados grandes no se incluyen en la publicación web. Seguí las instrucciones del repositorio para prepararlos localmente.</p>
+  </section>
+</main>
+</body>
+</html>
