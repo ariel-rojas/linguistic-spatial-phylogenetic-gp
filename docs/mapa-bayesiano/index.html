@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mapa bayesiano global · Procesos gaussianos para datos lingüísticos</title>
+  <style>
+    :root { color-scheme: light; --ink:#17324d; --blue:#176b87; --paper:#f3f7fa; --line:#d8e2e9; }
+    body { margin:0; color:var(--ink); font:16px/1.55 system-ui,sans-serif; background:var(--paper); }
+    header { padding:22px max(20px,calc((100% - 1450px)/2)); background:#17324d; color:white; }
+    header a { color:#c8e9fa; }
+    main { max-width:1450px; margin:18px auto; padding:0 18px 24px; }
+    .intro { display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+    .intro p { max-width:950px; margin:8px 0 16px; }
+    .button { display:inline-block; padding:10px 14px; border-radius:8px; background:#176b87; color:white; text-decoration:none; font-weight:650; }
+    .note { color:#526779; font-size:14px; }
+    iframe { display:block; width:100%; height:calc(100vh - 265px); min-height:620px; border:1px solid var(--line); border-radius:12px; background:white; }
+    @media(max-width:700px) { header { padding:18px; } main { padding:0 10px 18px; } iframe { height:75vh; min-height:540px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="../">← Volver a la documentación</a>
+    <h1>Mapa bayesiano global</h1>
+  </header>
+  <main>
+    <div class="intro">
+      <div>
+        <p>Este mapa muestra la ejecución bayesiana completa: observaciones, lenguas usadas para entrenar, test reservado e imputaciones propuestas. Elegí capas desde el control arriba a la derecha y pulsa un punto para ver sus probabilidades e intervalos. Las fichas de test e imputación permiten abrir histogramas posteriores por lengua.</p>
+        <p class="note">El test contiene 276 lenguas (239 aciertos y 37 errores); hay 940 propuestas de imputación. Son predicciones para revisar, no nuevas observaciones. La primera carga puede tardar porque el mapa conserva todas sus capas.</p>
+      </div>
+      <a class="button" href="map.html" target="_blank" rel="noopener">Abrir el mapa a pantalla completa ↗</a>
+    </div>
+    <iframe title="Mapa global de predicciones bayesianas de OV, VO y Sin dominante" src="map.html" loading="eager" allowfullscreen></iframe>
+  </main>
+</body>
+</html>

@@ -232,6 +232,37 @@ histórico ya se ha consultado; la comparación actual es exploratoria.
 - [Muestreo elíptico](https://proceedings.mlr.press/v9/murray10a.html).
 - [INLA, Martino y Riebler](https://arxiv.org/abs/1907.01248).
 
+## Mapa publicado en GitHub Pages
+
+La [vista mundial interactiva](mapa-bayesiano/) muestra la instantánea de la
+ejecución bayesiana completada. Sus capas permiten alternar datos observados,
+test, train, train junto con test e imputaciones. Al abrir una lengua se ven las
+probabilidades medias y sus intervalos; el enlace de la ficha abre el explorador
+de histogramas posteriores y parámetros globales.
+
+El mapa es una salida pública del proyecto: sus puntos muestran nombres,
+coordenadas WALS, clase observada, predicción y probabilidades. La página conserva
+la atribución de WALS y de los mapas base. No se publican las fuentes descargadas,
+los CSV de resultados ni los archivos NPZ de muestras.
+
+La página conserva una copia de `map.html` y `posterior.html` junto a su índice.
+Después de generar un ajuste y un mapa nuevos, reemplazá esas dos copias desde
+PowerShell y subí el cambio:
+
+```powershell
+uv run --extra bayesian gaussian-processes bayesian
+uv run --extra bayesian gaussian-processes map --bayesian
+Copy-Item results\spherical_spline_family\bayesian\map.html docs\mapa-bayesiano\map.html -Force
+Copy-Item results\spherical_spline_family\bayesian\posterior.html docs\mapa-bayesiano\posterior.html -Force
+git add docs
+git commit -m "Update published Bayesian map"
+git push
+```
+
+El flujo de GitHub Actions reconstruye la página cuando cambia `docs/`. La
+ejecución actual se publica como instantánea; cambiar los resultados locales por
+sí solo no actualiza la web.
+
 ## Explorar las distribuciones en la web
 
 `map --bayesian` genera también `posterior.html`, sin volver a muestrear. En las

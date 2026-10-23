@@ -61,10 +61,15 @@ conocer entradas, licencias y limitaciones.
 
 El código Python está en `src/gaussian_processes/`. Las guías y la página estática
 se encuentran en `docs/`. GitHub Pages puede publicar esa carpeta desde la rama
-principal. Tras subir el repositorio, elegí **Settings → Pages → GitHub Actions**
-para activar el flujo automático. La página explica el proceso y enlaza el código
-fuente. Los archivos descargados y los resultados analíticos no se publican con
-el sitio.
+principal. La [documentación del proyecto](https://ariel-rojas.github.io/linguistic-spatial-phylogenetic-gp/)
+incluye el [mapa bayesiano global](https://ariel-rojas.github.io/linguistic-spatial-phylogenetic-gp/mapa-bayesiano/)
+con capas para observaciones, train, test, ambos e imputaciones, además de un
+explorador de distribuciones posteriores por lengua.
+
+El mapa publicado es una instantánea de una ejecución completa. No se publican
+los datos descargados, los archivos CSV de trabajo ni las muestras NPZ de cientos
+de megabytes. Para actualizar la instantánea después de volver a ejecutar el
+modelo, seguí los pasos de [la guía bayesiana](docs/bayesian_inference.md#mapa-publicado-en-github-pages).
 
 El proyecto es de investigación y sus resultados dependen de la cobertura y
 calidad de las fuentes lingüísticas, de la muestra y de los supuestos del modelo.
