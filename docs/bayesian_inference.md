@@ -82,9 +82,9 @@ permiten detalle más fino. Para que los detalles más pequeños no dominen, el
 modelo asigna a cada coeficiente un peso:
 
 $$
-w_\ell(\lambda,L)=\frac{\operatorname{logistic}((L+1/2-\ell)/\tau)}{1+\lambda[\ell(\ell+1)]^2},
+w_\ell(\lambda,L)=\frac{\mathrm{logistic}((L+1/2-\ell)/\tau)}{1+\lambda[\ell(\ell+1)]^2},
 \qquad
-D_{\lambda,L}=\operatorname{diag}
+D_{\lambda,L}=\mathrm{diag}
 \left(\sqrt{\frac{w_{\ell}(\lambda,L)}{\sum_{j=1}^{M_{\max}}w_{\ell_j}(\lambda,L)}}\right).
 $$
 
@@ -107,7 +107,7 @@ Dimensiones: $(N\times M_{\max})(M_{\max}\times M_{\max})(M_{\max}\times2)=N\tim
 normal por esas matrices, la covarianza de cada columna de $g$ es:
 
 $$
-\operatorname{Cov}(g_{\cdot k}\mid\sigma_s,\lambda,L)
+\mathrm{Cov}(g_{\cdot k}\mid\sigma_s,\lambda,L)
 =\sigma_s^2\Phi D_{\lambda,L}^2\Phi^\mathsf T
 =\sigma_s^2R_{\mathrm{espacial}}(\lambda,L).
 $$
@@ -150,7 +150,7 @@ $$
 Por tanto,
 
 $$
-\operatorname{Cov}(h_{\cdot k}\mid\sigma_f)
+\mathrm{Cov}(h_{\cdot k}\mid\sigma_f)
 =\sigma_f^2R_{\mathrm{filogenética}}.
 $$
 
@@ -219,8 +219,8 @@ no tienen tres grados de libertad: sumar la misma constante $c$ a todos no
 cambia las probabilidades:
 
 $$
-\operatorname{softmax}(\ell_1+c,\ell_2+c,\ell_3+c)
-=\operatorname{softmax}(\ell_1,\ell_2,\ell_3).
+\mathrm{softmax}(\ell_1+c,\ell_2+c,\ell_3+c)
+=\mathrm{softmax}(\ell_1,\ell_2,\ell_3).
 $$
 
 Por eso un vector de tres logits tiene una dirección redundante. Esta

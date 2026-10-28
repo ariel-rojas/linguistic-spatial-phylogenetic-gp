@@ -17,7 +17,7 @@ $f(s)=B(s)\beta$ y los coeficientes tienen prior
 $\beta\sim\mathcal N(0,\Sigma_\beta)$, entonces:
 
 $$
-\operatorname{Cov}(f(s),f(t))
+\mathrm{Cov}(f(s),f(t))
 =B(s)\Sigma_\beta B(t)^\mathsf T.
 $$
 
@@ -40,7 +40,7 @@ R_{\mathrm{spline}}(s,t)
 P_\ell(\cos\theta(s,t))}
 {\sum_{\ell=0}^{L_{\max}}(2\ell+1)w_\ell},
 \qquad
-w_\ell=\frac{\operatorname{logistic}((L+1/2-\ell)/\tau)}{1+\lambda[\ell(\ell+1)]^2}.
+w_\ell=\frac{\mathrm{logistic}((L+1/2-\ell)/\tau)}{1+\lambda[\ell(\ell+1)]^2}.
 $$
 
 Los armónicos esféricos hacen que la base viva sobre una esfera y no sobre un
