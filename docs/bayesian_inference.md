@@ -1,9 +1,10 @@
 # Inferencia bayesiana: del dato a las probabilidades
 
 Esta guía explica el modelo bayesiano que ejecuta **gaussian-processes run**.
-Empieza por las matrices y termina en las probabilidades de OV, Sin dominante
-y VO. El clasificador clásico de scikit-learn queda como alternativa y se
-resume en la [guía del proyecto](workflow.md).
+Empieza con la intuición de los efectos, desarrolla las dos componentes y
+las matrices que las construyen, y termina en probabilidades, inferencia y
+comandos para ejecutar el análisis. El clasificador clásico de scikit-learn
+queda como alternativa y se resume en la [guía del proyecto](workflow.md).
 
 ## 1. Qué pregunta responde
 
@@ -21,44 +22,19 @@ $$
 La categoría Sin dominante describe un valor lingüístico que WALS registra.
 No es una manera de decir que el modelo duda entre OV y VO.
 
-## 2. Las piezas y sus tamaños
-
-L es ahora un parámetro continuo de la inferencia, con prior uniforme entre
-**4 y 16**. La base computacional llega al límite superior configurado, con
-$M_{\max}=289$ patrones (1 + 3 + 5 + … + 33). Cada muestra posterior asigna
-pesos distintos a esos patrones mediante un corte suave alrededor de su propio
-L. Se usan dos contrastes latentes para formar las probabilidades de tres
-clases.
-
-| Símbolo | Tamaño | Qué representa |
-|---|---:|---|
-| Φ | N × Mₘₐₓ | Valor de cada patrón esférico en cada lengua |
-| Dλ,L | Mₘₐₓ × Mₘₐₓ | Peso de cada escala según suavizado y corte L |
-| Zₛ | Mₘₐₓ × 2 | Coeficientes normales de los patrones espaciales |
-| g | N × 2 | Efecto espacial en los dos contrastes |
-| Q | N × r | Factor cuya covarianza reproduce la filogenia |
-| Z-filo | r × 2 | Coeficientes aleatorios del efecto filogenético |
-| h | N × 2 | Efecto filogenético en los dos contrastes |
-| H | N × 2 | Tendencias latentes completas, incluido el intercepto |
-| A | 3 × 2 | Contrastes que traducen tendencias a logits de clase |
-| ℒ | N × 3 | Tres logits, uno por clase y lengua |
-
-N cuenta lenguas; Mₘₐₓ cuenta patrones espaciales hasta el máximo configurado
-de la base; r cuenta las hojas únicas necesarias para representar el efecto
-del árbol en ese ajuste.
-
-## 3. Qué es una tendencia latente
+## 2. Qué es una tendencia latente
 
 No empezamos diciendo «esta lengua es OV». Primero calculamos dos cantidades
 continuas no observadas para cada lengua. Se llaman latentes porque no se miden
 directamente: sirven para expresar inclinaciones relativas antes de convertirlas
 en probabilidades.
 
-Para la lengua $i$, esas dos tendencias completas son la fila $H_i$. Una
-muestra posterior $s$ contiene una posible versión de los parámetros y de
-los campos latentes. No existe una suma de cuatro tipos de datos llamada
-«amplitud + suavizado + intercepto + F»: esos son parámetros y piezas del
-cálculo, no sumandos intercambiables. La suma que sí ocurre es:
+Para la lengua $i$, esas dos tendencias completas son la fila $H_i$. Cada
+muestra posterior $s$ representa un escenario completo: valores posibles
+de los parámetros y de los campos latentes. En la ecuación, las tres piezas que
+se suman son el nivel global $\alpha$, la desviación espacial $g_i$ y la
+desviación filogenética $h_i$. Las amplitudes y el suavizado determinan la
+escala y la forma de esos campos; no son efectos adicionales por lengua.
 
 $$
 H_i=\alpha+g_i+h_i.
@@ -68,7 +44,7 @@ Aquí $\alpha$ es un intercepto de dos componentes, $g_i$ el efecto espacial
 y $h_i$ el efecto filogenético. La fórmula se aplica por fila, es decir, por
 lengua.
 
-## 4. Cómo la suavidad espacial se convierte en covarianza
+## 3. Efecto espacial: armónicos y grado efectivo L
 
 La ubicación $s_i$ se evalúa en armónicos esféricos reales:
 
@@ -77,9 +53,17 @@ $$
 \qquad 0\leq \ell\leq L_{\max},\quad -\ell\leq m\leq\ell.
 $$
 
-Los grados bajos representan cambios amplios sobre el planeta; los grados altos
-permiten detalle más fino. Para que los detalles más pequeños no dominen, el
-modelo asigna a cada coeficiente un peso:
+El grado $\ell$ indica la escala del patrón: grados bajos describen cambios
+amplios sobre el planeta y grados altos permiten detalles más finos. El
+parámetro $L$ marca el centro del corte espectral que decide cuánto se atenúan
+esos detalles. Se infiere como un valor continuo con prior uniforme entre 4 y
+16. No es un límite duro: una transición logística suave conserva pesos
+decrecientes alrededor y por encima de $L$. La base computacional llega hasta
+el límite superior 16, es decir, contiene 289 patrones antes de ponderarlos.
+Así NUTS puede aprender cuánta escala fina admiten los datos sin cambiar el
+tamaño de las matrices durante el muestreo.
+
+El peso de cada patrón combina ese corte con una penalización de suavidad:
 
 $$
 w_\ell(\lambda,L)=\frac{\mathrm{logistic}((L+1/2-\ell)/\tau)}{1+\lambda[\ell(\ell+1)]^2},
@@ -89,11 +73,10 @@ D_{\lambda,L}=\mathrm{diag}
 $$
 
 En el denominador, $j$ recorre las columnas hasta el máximo configurado,
-incluidos los órdenes $m$ repetidos por grado. La función logística reduce
-gradualmente el peso alrededor de L; $\tau$ fija el ancho de esa transición y
-se mantiene fijo. El coeficiente $\lambda$ controla la suavidad adicional: al
-crecer, reduce más los grados altos. El modelo infiere L y $\lambda$; no usa
-la grilla clásica.
+incluidos los órdenes $m$ repetidos por grado. El ancho $\tau$ de la transición
+logística se mantiene fijo; el modelo infiere $L$ y el parámetro de suavidad
+$\lambda$. Un $\lambda$ más alto reduce con mayor fuerza los grados altos.
+Esta inferencia no usa la grilla clásica.
 
 Los coeficientes estándar son normales independientes:
 
@@ -132,12 +115,21 @@ isótropa. Los datos pueden llevar a una superficie posterior con picos y valles
 regionales, pero el alcance de correlación no cambia automáticamente según la
 región. Más detalle en [Referencia del modelo](model_reference.md).
 
-## 5. Cómo se convierte el árbol en un efecto aleatorio
+## 4. Efecto filogenético: el árbol como covarianza
 
-La matriz filogenética se construye a partir del tiempo de ramas compartidas,
-se normaliza a diagonal uno y se ponen ceros entre familias. Se factoriza como
-$R_{\mathrm{filogenética}}=QQ^\mathsf T$, con tratamiento conjunto de hojas
-repetidas para que aliases de la misma punta compartan el efecto.
+Para dos lenguas $i$ y $j$, primero se suma la longitud de las ramas que sus
+caminos comparten desde la raíz hasta su ancestro común:
+
+$$
+C_{ij}=\sum_{e\in P_i\cap P_j}t_e.
+$$
+
+La matriz $C$ se convierte en correlaciones dividiendo por las desviaciones
+propias de cada lengua,
+$R_{ij}=C_{ij}/\sqrt{C_{ii}C_{jj}}$. Después se ponen en cero las correlaciones
+entre familias distintas. La matriz resultante se factoriza como
+$R_{\mathrm{filogenética}}=QQ^\mathsf T$; aliases de la misma punta se
+representan juntos para compartir su efecto.
 
 El campo se genera así:
 
@@ -165,6 +157,36 @@ Los campos espacial y filogenético son independientes en el prior dados sus
 parámetros. Después de observar las etiquetas, sus distribuciones posteriores
 pueden asociarse o compensarse. Por eso no se deben interpretar sus amplitudes
 como porcentajes causales de geografía y genealogía.
+
+## 5. Resumen de piezas y dimensiones
+
+Una vez definidas las componentes, podemos resumir sus tamaños. En esta
+configuración $L$ tiene prior uniforme continuo entre 4 y 16. La base llega
+hasta ese máximo: $M_{\max}=(16+1)^2=289$ patrones. Cada muestra posterior
+pondera esos mismos patrones según su propio $L$ y su propio suavizado.
+
+| Símbolo | Tamaño | Qué representa |
+|---|---:|---|
+| $L$ | escalar continuo | Centro del corte espectral; se infiere entre 4 y 16 |
+| $\lambda$ | escalar positivo | Suavizado espectral inferido |
+| $\sigma_s$ | escalar positivo | Amplitud del efecto espacial |
+| $\sigma_f$ | escalar positivo | Amplitud del efecto filogenético |
+| Φ | N × Mₘₐₓ | Valor de cada patrón esférico en cada lengua |
+| $D_{\lambda,L}$ | Mₘₐₓ × Mₘₐₓ | Pesos diagonales de los patrones según suavizado y corte L |
+| Zₛ | Mₘₐₓ × 2 | Coeficientes normales de los patrones espaciales |
+| α | vector de tamaño 2 | Intercepto global para los dos contrastes |
+| g | N × 2 | Efecto espacial en los dos contrastes |
+| Q | N × r | Factor cuya covarianza reproduce la filogenia |
+| Z-filo | r × 2 | Coeficientes aleatorios del efecto filogenético |
+| h | N × 2 | Efecto filogenético en los dos contrastes |
+| H | N × 2 | Tendencias latentes completas, incluido el intercepto |
+| A | 3 × 2 | Contrastes que traducen tendencias a logits de clase |
+| ℒ | N × 3 | Tres logits, uno por clase y lengua |
+
+La tabla resume las piezas ahora que ya vimos qué hace cada efecto. N cuenta
+lenguas; Mₘₐₓ cuenta los patrones de la base espacial hasta el límite
+configurado; r cuenta las hojas únicas necesarias para representar el árbol
+en ese ajuste. El intercepto α tiene dos valores, uno por contraste.
 
 ## 6. El producto matricial que crea los logits
 
@@ -264,7 +286,9 @@ p(\mathbf y\mid\text{parámetros})
 $$
 
 Se multiplican solo las probabilidades de las clases que realmente se
-observaron. Una etiqueta faltante no participa en esa verosimilitud.
+observaron. Una etiqueta faltante no participa en esa verosimilitud. No se suma
+un error gaussiano separado a $H$: el paso de las tendencias continuas a la
+respuesta categórica se modela directamente con `Categorical(logits=ℒ)`.
 
 ## 8. Priors y posterior
 
@@ -272,7 +296,7 @@ Los priors actuales están en **config/bayesian.json**:
 
 | Cantidad | Prior | Intuición |
 |---|---|---|
-| Grado máximo efectivo L | Uniforme continua entre 4 y 16 | Antes de ver etiquetas, todas las posiciones del corte dentro del rango tienen igual densidad previa |
+| Grado efectivo del corte L | Uniforme continua entre 4 y 16 | Antes de ver etiquetas, todas las posiciones del corte dentro del rango tienen igual densidad previa |
 | σₛ, σ-filo | HalfNormal(1) | Amplitudes no negativas de los dos campos |
 | log(λ) | Normal(media = log(0.001), desvío = 1.5) | Suavidad positiva, con incertidumbre en escala logarítmica |
 | Cada elemento de α | Normal(media = 0, desvío = 1.5) | Tendencia global antes de ver etiquetas |
@@ -469,7 +493,7 @@ muestras, no un histograma de etiquetas observadas. Los parámetros σₛ, σ-fi
 y λ son globales al ajuste, no valores
 independientes elegidos para cada lengua.
 
-## Referencias
+## 13. Referencias
 
 - [GAM y términos suaves de mgcv](https://rweb.stat.umn.edu/R/library/mgcv/html/gam.html).
 - [Suavizadores GP de rango reducido en mgcv](https://web.mit.edu/r/current/lib/R/library/mgcv/html/smooth.construct.gp.smooth.spec.html).
