@@ -59,9 +59,19 @@ class PosteriorViewTests(unittest.TestCase):
             }
         )
         provenance = {
-            "sampling": {},
-            "evaluation_diagnostics": {},
-            "imputation_diagnostics": {},
+            "sampling": {
+                "degree_min": 4,
+                "degree_max": 8,
+                "degree_taper_width": 0.25,
+                "predictive_draws": 4,
+                "seed": 4,
+            },
+            "evaluation_diagnostics": {
+                "degree_summary": {"mean": 6, "median": 6, "interval_95": [4, 8]}
+            },
+            "imputation_diagnostics": {
+                "degree_summary": {"mean": 7, "median": 7, "interval_95": [4, 8]}
+            },
             "status": "complete",
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -73,12 +83,15 @@ class PosteriorViewTests(unittest.TestCase):
                     target_ids=[identifier],
                     fit_ids=["train"],
                     probabilities=probabilities,
-                    settings_json=json.dumps({}),
-                    diagnostics_json=json.dumps({}),
+                    settings_json=json.dumps(provenance["sampling"]),
+                    diagnostics_json=json.dumps(provenance[f"{stage}_diagnostics"]),
                     posterior_sigma_spatial=np.ones((2, 4)),
                     posterior_sigma_phylogenetic=np.ones((2, 4)),
                     posterior_smoothing=np.ones((2, 4)) * 0.001,
+                    posterior_max_degree=np.array([[4, 8, 4, 8], [4, 8, 8, 8]]),
                     posterior_intercept=np.zeros((2, 4, 2)),
+                    spatial_influence=np.array([[0.2], [0.1]]),
+                    phylogenetic_influence=np.array([[0.3], [0.15]]),
                 )
             payload = build_posterior_payload(folder, provenance, rows)
             self.assertEqual(

@@ -114,6 +114,10 @@ function render() {
   $("stageNote").textContent =
     `Ajuste utilizado: ${item.stage === "imputation" ? "todos los observados para imputar" : "solo train para evaluar test"} (${stage.n_fit} observaciones). Esta selección cambia automáticamente según el caso elegido.`;
   const definitions = {
+    max_degree: [
+      "Grado máximo efectivo L",
+      "Centro del corte logístico suave: controla qué grados de armónicos aportan a la superficie espacial.",
+    ],
     sigma_spatial: [
       "Amplitud espacial σ",
       "Cuánto pueden variar las tendencias espaciales.",
@@ -155,7 +159,7 @@ function render() {
       )
       .join(
         "",
-      )}</div><p>Criterio: R-hat &lt; 1,01; ESS bulk/tail ≥ 400; cero divergencias y cero saturaciones de profundidad. Ninguno certifica que los supuestos lingüísticos sean correctos.</p>`;
+      )}</div><p>El criterio se aplica a L, amplitudes, suavizado e interceptos globales: R-hat &lt; 1,01; ESS bulk/tail ≥ 400; cero divergencias y cero saturaciones de profundidad. Para los ${diagnostics.latent_diagnostics.n_coefficients} coeficientes latentes: R-hat máximo ${diagnostics.latent_diagnostics.max_rhat.toFixed(3)}, ESS bulk mínimo ${diagnostics.latent_diagnostics.min_ess_bulk.toFixed(0)}. Se resumen aparte porque son muchos y algunos pueden mezclar lentamente. Ninguno de estos controles certifica que los supuestos lingüísticos sean correctos.</p>`;
   const url = new URL(location.href);
   url.searchParams.set("language", item.id);
   url.searchParams.set("stage", item.stage);

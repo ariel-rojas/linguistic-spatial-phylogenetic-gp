@@ -1,286 +1,478 @@
-# GP bayesiano: flujo completo implementado
+# Inferencia bayesiana: del dato a las probabilidades
 
-El comando `bayesian` utiliza NumPyro/NUTS y una verosimilitud categórica conjunta.
-`train` y `search` conservan sklearn con Laplace y uno-contra-el-resto. Una diferencia
-predictiva entre ellos no puede atribuirse exclusivamente a integrar hiperparámetros.
+Esta guía explica el modelo bayesiano que ejecuta **gaussian-processes run**.
+Empieza por las matrices y termina en las probabilidades de OV, Sin dominante
+y VO. El clasificador clásico de scikit-learn queda como alternativa y se
+resume en la [guía del proyecto](workflow.md).
 
-## 1. Datos y separación
+## 1. Qué pregunta responde
 
-WALS aporta lenguas, coordenadas y OV/VO/Sin dominante. LOW aporta familias y
-metadatos de identidad. El árbol MCC aporta tiempos compartidos. `load_data`
-carga la tabla y `load_phylogeny` verifica hashes, alinea hojas, normaliza C y
-pone cero entre familias. Cada hoja sin familia tiene bloque individual.
-El archivo original no se modifica. La fuente tiene 2185 hojas enlazadas.
+Para cada lengua con orden conocido, usamos su ubicación y su posición en el
+árbol para aprender patrones compartidos. Para una lengua con orden faltante,
+el resultado no es solo una etiqueta: es una distribución posterior sobre las
+tres clases.
 
-Los elegibles incluyen 1378 observados y 940 faltantes. `split_data` usa
-StratifiedGroupKFold, aproximadamente 20%, semilla 42: 1102 train y 276 test.
-Conserva identidades compartidas en la misma partición y aproxima las proporciones
-de clases. La primera inferencia usa SOLO etiquetas train. Se permiten coordenadas
-y árbol conocidos de test, pero sus etiquetas no entran a la verosimilitud.
+El orden de clases en el código y en los archivos es:
 
-Después de evaluar se inicia un segundo muestreo con las 1378 observaciones para
-imputar los 940 faltantes. Las predicciones de test no se reemplazan por las de
-ese segundo ajuste. No hay grid search dentro de este flujo. La primera ruta bayesiana implementada
-es este split aleatorio agrupado; los comandos de evaluación por familias y
-bloques espaciales siguen usando sklearn, no NUTS.
+$$
+(\mathrm{OV},\ \mathrm{Sin\ dominante},\ \mathrm{VO}).
+$$
 
-## 2. Qué son F y F^(s)
+La categoría Sin dominante describe un valor lingüístico que WALS registra.
+No es una manera de decir que el modelo duda entre OV y VO.
 
-F es una tabla de tendencias ocultas, con una fila por lengua y dos columnas de
-contrastes. No contiene etiquetas ni probabilidades. Dos contrastes permiten
-construir tres logits de suma cero, sin elegir una clase de referencia.
+## 2. Las piezas y sus tamaños
 
-F^(s) significa una realización plausible de esa tabla en la muestra posterior s.
-El superíndice NO es una potencia. La expresión «amplitudes + suavizado + interceptos + F» era una enumeración del contenido de la muestra, NO una suma matemática. Cada muestra incluye también sus amplitudes,
-suavizado e interceptos. No representa una iteración de mejora ni otra base de datos.
+L es ahora un parámetro continuo de la inferencia, con prior uniforme entre
+**4 y 16**. La base computacional llega al límite superior configurado, con
+$M_{\max}=289$ patrones (1 + 3 + 5 + … + 33). Cada muestra posterior asigna
+pesos distintos a esos patrones mediante un corte suave alrededor de su propio
+L. Se usan dos contrastes latentes para formar las probabilidades de tres
+clases.
 
-Ejemplo inventado: logits (1.2, -0.8, 0) en orden OV, SD, VO producen probabilidades
-(0.696, 0.094, 0.210). Si la observación es OV, la contribución a la verosimilitud
-es 0.696. Otra muestra de parámetros y tendencias produce otras probabilidades.
+| Símbolo | Tamaño | Qué representa |
+|---|---:|---|
+| Φ | N × Mₘₐₓ | Valor de cada patrón esférico en cada lengua |
+| Dλ,L | Mₘₐₓ × Mₘₐₓ | Peso de cada escala según suavizado y corte L |
+| Zₛ | Mₘₐₓ × 2 | Coeficientes normales de los patrones espaciales |
+| g | N × 2 | Efecto espacial en los dos contrastes |
+| Q | N × r | Factor cuya covarianza reproduce la filogenia |
+| Z-filo | r × 2 | Coeficientes aleatorios del efecto filogenético |
+| h | N × 2 | Efecto filogenético en los dos contrastes |
+| H | N × 2 | Tendencias latentes completas, incluido el intercepto |
+| A | 3 × 2 | Contrastes que traducen tendencias a logits de clase |
+| ℒ | N × 3 | Tres logits, uno por clase y lengua |
 
-## 3. Covarianza y representación
+N cuenta lenguas; Mₘₐₓ cuenta patrones espaciales hasta el máximo configurado
+de la base; r cuenta las hojas únicas necesarias para representar el efecto
+del árbol en ese ajuste.
 
-R_filo[i,j] = C[i,j] / sqrt(C[i,i] C[j,j]), con cero entre familias diferentes.
-K = sigma_spatial² R_spatial(lambda) + sigma_phylogenetic² R_filo.
+## 3. Qué es una tendencia latente
 
-Para evitar factorizar K en cada paso usamos una representación equivalente:
+No empezamos diciendo «esta lengua es OV». Primero calculamos dos cantidades
+continuas no observadas para cada lengua. Se llaman latentes porque no se miden
+directamente: sirven para expresar inclinaciones relativas antes de convertirlas
+en probabilidades.
 
-```
-g = sigma_spatial * Phi * diag(sqrt(w / sum(w))) * z_spatial
-h = sigma_phylogenetic * L * z_phylogenetic
-F = g + h
-logits = (alpha + F) * A.T
-```
+Para la lengua $i$, esas dos tendencias completas son la fila $H_i$. Una
+muestra posterior $s$ contiene una posible versión de los parámetros y de
+los campos latentes. No existe una suma de cuatro tipos de datos llamada
+«amplitud + suavizado + intercepto + F»: esos son parámetros y piezas del
+cálculo, no sumandos intercambiables. La suma que sí ocurre es:
 
-Phi contiene armónicos reales multiplicados por sqrt(4*pi). Para cada armónico de
-grado l, w = 1/(1 + lambda*[l(l+1)]²). Se incluyen todos los órdenes y el grado
-cero: reproduce exactamente el spline de Legendre existente. Grado 16 equivale
-a 289 coeficientes por contraste. El modo constante y el intercepto tienen priors
-propios: no interpretamos sus contribuciones constantes por separado.
+$$
+H_i=\alpha+g_i+h_i.
+$$
 
-L es Cholesky de la correlación de hojas ÚNICAS de train. Las filas WALS que
-comparten hoja comparten el efecto. NUTS recibe L en formato disperso BCOO para
-aprovechar los ceros entre familias, sin aproximar sus valores. No se agrega
-nugget a los alias. Los z son
-normales estándar independientes con dos columnas.
+Aquí $\alpha$ es un intercepto de dos componentes, $g_i$ el efecto espacial
+y $h_i$ el efecto filogenético. La fórmula se aplica por fila, es decir, por
+lengua.
 
-A es una matriz 3x2: filas de norma uno, suma cero y productos entre filas -1/2.
-Por ello los tres logits tienen prior simétrico y cada clase tiene covarianza K
-para su función. La restricción evita la dirección común redundante de softmax.
-La normalidad corresponde a las tendencias, no a los códigos de clase.
+## 4. Cómo la suavidad espacial se convierte en covarianza
 
-Geografía y filogenia pueden explicar patrones similares: sus amplitudes pueden
-compensarse en la posterior. No interpretamos su reparto como atribución causal.
-El bloqueo familiar tampoco elimina geografía de las relaciones internas del árbol.
+La ubicación $s_i$ se evalúa en armónicos esféricos reales:
 
-## 4. Priors y verosimilitud
+$$
+\Phi_{i,\ell m}=\sqrt{4\pi}\,Y_{\ell m}(s_i),
+\qquad 0\leq \ell\leq L_{\max},\quad -\ell\leq m\leq\ell.
+$$
 
-En `posterior.html`, abrir **«Entender el modelo: priors, rangos, datos y evaluación»**.
-La guía usa `run.json` de esa ejecución, no el archivo de configuración actual.
-Incluye las fórmulas de θ, dimensiones reales de Z, priors analíticos, controles de
-NUTS, comprobación predictiva previa y métricas por clase. `visualization/bayesian_context.py`
-calcula cuantiles y masas con SciPy; `posterior_assets/workflow.js` organiza la explicación.
+Los grados bajos representan cambios amplios sobre el planeta; los grados altos
+permiten detalle más fino. Para que los detalles más pequeños no dominen, el
+modelo asigna a cada coeficiente un peso:
 
-Un **soporte** es el conjunto de valores permitidos. Un **intervalo central del 95 %**
-del prior no es una restricción: queda un 5 % de probabilidad fuera. El intervalo
-posterior es distinto y depende de las etiquetas. Los gráficos de priors muestran
-el 99,8 % central sin renormalizar sus masas; λ usa eje log10 para mostrar su escala.
-Los coeficientes Z son normales estándar independientes en el prior; sus posteriores
-pueden depender entre sí. Su transformación por Φ y L produce efectos correlacionados.
+$$
+w_\ell(\lambda,L)=\frac{\operatorname{logistic}((L+1/2-\ell)/\tau)}{1+\lambda[\ell(\ell+1)]^2},
+\qquad
+D_{\lambda,L}=\operatorname{diag}
+\left(\sqrt{\frac{w_{\ell}(\lambda,L)}{\sum_{j=1}^{M_{\max}}w_{\ell_j}(\lambda,L)}}\right).
+$$
 
-Priors de config/bayesian.json:
+En el denominador, $j$ recorre las columnas hasta el máximo configurado,
+incluidos los órdenes $m$ repetidos por grado. La función logística reduce
+gradualmente el peso alrededor de L; $\tau$ fija el ancho de esa transición y
+se mantiene fijo. El coeficiente $\lambda$ controla la suavidad adicional: al
+crecer, reduce más los grados altos. El modelo infiere L y $\lambda$; no usa
+la grilla clásica.
 
-- sigma_spatial y sigma_phylogenetic ~ HalfNormal(1).
-- log(lambda) ~ Normal(log(0.001), 1.5²).
-- alpha: dos contrastes independientes Normal(0, 1.5²).
-- z_spatial y z_phylogenetic: coeficientes independientes Normal(0,1).
+Los coeficientes estándar son normales independientes:
 
-Las amplitudes son desviaciones estándar latentes, no tasas por milenio.
-Los valores puntuales spatial_variance, phylogenetic_rate, smoothing y la grilla
-del JSON sklearn NO se emplean como estimaciones en NUTS. Se reutilizan grado,
-datos, estructura filogenética y protocolo de separación.
+$$
+Z_s\sim\mathcal N(0,I),
+\qquad
+g=\sigma_s\Phi D_{\lambda,L} Z_s.
+$$
 
-```
-pi[i,c] = exp(logit[i,c]) / sum_r exp(logit[i,r])
-y[i] ~ Categorical(pi[i])
-verosimilitud = producto_i pi[i,clase_observada_i]
-posterior ∝ verosimilitud × prior(z) × prior(alpha) × prior(amplitudes,lambda)
-```
+Dimensiones: $(N\times M_{\max})(M_{\max}\times M_{\max})(M_{\max}\times2)=N\times2$. Al propagar la
+normal por esas matrices, la covarianza de cada columna de $g$ es:
 
-Antes del ajuste `prior_predictive` simula 300 escenarios sin usar etiquetas.
-Resume las frecuencias esperadas por clase y cuántas probabilidades son extremas.
-Queda en run.json; no certifica automáticamente que los priors sean adecuados.
+$$
+\operatorname{Cov}(g_{\cdot k}\mid\sigma_s,\lambda,L)
+=\sigma_s^2\Phi D_{\lambda,L}^2\Phi^\mathsf T
+=\sigma_s^2R_{\mathrm{espacial}}(\lambda,L).
+$$
 
-## 5. Cómo itera NUTS
+Este es el puente exacto entre la base suave y el kernel. El código no necesita
+crear y factorizar una matriz espacial densa de tamaño $N\times N$: construye
+la superficie mediante la base común y reduce suavemente los patrones por
+encima de L. Con una transición estrecha, se aproxima al spline esférico
+regularizado de **SphericalSplineKernel**. Esta versión permite a NUTS estimar
+L de manera continua; es una representación bayesiana de un término suave,
+emparentada con un GAM; no llama
+a **mgcv::gam** ni usa una base de nudos de spline cúbico.
 
-`categorical_gp` declara el modelo y `sample_posterior` ejecuta NUTS. JAX calcula
-gradientes en doble precisión. Una posición de la cadena incluye amplitudes,
-lambda, alpha y todos los z. NUTS incorpora un impulso auxiliar, construye
-trayectorias guiadas por gradientes de la log posterior y evita prolongarlas
-cuando comienzan a regresar sobre sí mismas. No busca quedarse con un máximo.
+La misma $\sigma_s$ y la misma $\lambda$ se comparten entre las dos columnas
+de $g$; sus coeficientes normales $Z_s$ son independientes en el prior.
+La base incluye el patrón constante de grado cero. Tanto este modo como
+$\alpha$ tienen priors propios, pero sus desplazamientos constantes no se
+interpretan por separado.
 
-Durante warmup adapta el muestreador; esas iteraciones se descartan. Las cadenas
-posteriores permiten aproximar integrales por promedios. Las cadenas se ejecutan
-secuencialmente en CPU; no se requiere GPU.
+La correlación espacial previa depende solo de la distancia angular: es
+isótropa. Los datos pueden llevar a una superficie posterior con picos y valles
+regionales, pero el alcance de correlación no cambia automáticamente según la
+región. Más detalle en [Referencia del modelo](model_reference.md).
 
-Se revisan R-hat de rango y ESS bulk/tail de TODOS los parámetros, incluidos z,
-divergencias y saturación de profundidad. Criterio: Rhat<1.01, ESS bulk/tail>=400,
-cero divergencias y saturaciones. Si falla queda diagnostics_warning visible en
-reporte y mapa. No se cambian umbrales para ocultar problemas.
+## 5. Cómo se convierte el árbol en un efecto aleatorio
 
-`posterior_predictive_training` compara frecuencias reales con réplicas de etiquetas
-simuladas de la posterior. No es una métrica fuera de muestra. NUTS no muestrea
-las etiquetas discretas faltantes: se generan durante la predicción.
+La matriz filogenética se construye a partir del tiempo de ramas compartidas,
+se normaliza a diagonal uno y se ponen ceros entre familias. Se factoriza como
+$R_{\mathrm{filogenética}}=QQ^\mathsf T$, con tratamiento conjunto de hojas
+repetidas para que aliases de la misma punta compartan el efecto.
 
-## 6. Imputación e incertidumbre
+El campo se genera así:
 
-El explorador también muestra una sensibilidad contrafactual para cada caso. Para cada
-muestra guardada se calculan las probabilidades completas y las de dos escenarios
-auxiliares, omitiendo el efecto espacial o el filogenético. La distancia de variación
-total entre vectores categóricos es `TV(p,q) = 1/2 Σ_c |p_c − q_c|`, entre 0 y 1.
-Se resumen estos cambios a través de las muestras para mostrar la incertidumbre.
-Esto no es un peso estimado, una fracción de varianza ni una atribución causal: mide la
-sensibilidad de la predicción al retirar un término y mantener el resto de esa muestra.
-Los dos efectos pueden ser importantes simultáneamente o compensarse.
+$$
+Z_f\sim\mathcal N(0,I),
+\qquad
+h=\sigma_f QZ_f.
+$$
 
-Por muestra posterior, la componente espacial se evalúa en Phi de las nuevas
-coordenadas. Esto es exacto para nuestro kernel de rango finito.
+Por tanto,
 
-Para filogenia, con R_train = L L.T:
+$$
+\operatorname{Cov}(h_{\cdot k}\mid\sigma_f)
+=\sigma_f^2R_{\mathrm{filogenética}}.
+$$
 
-```
-A_target = R_target,train * inverse(L.T)
-V_target = R_target,target - A_target * A_target.T
-h_target = sigma_phylogenetic * (A_target*z_phylogenetic + sqrt(V_target)*epsilon)
-```
+La misma amplitud $\sigma_f$ se comparte entre las dos columnas de $h$.
 
-epsilon es normal estándar y se genera de nuevo por muestra. Se usan sistemas
-triangulares, no inversas explícitas. La raíz de V se calcula por autovalores:
-se rechaza negatividad material y solo se recorta error de redondeo.
+Si una lengua objetivo comparte ramas con las hojas de entrenamiento, la media
+de su efecto se condiciona a ellas. Si pertenece a una familia ausente del
+entrenamiento, su media filogenética es cero y conserva incertidumbre: la
+componente espacial y el intercepto todavía pueden contribuir.
 
-Las predicciones de todas las lenguas objetivo se generan juntas para conservar
-su dependencia. Para una familia ausente de train, la media filogenética es cero
-pero su varianza permanece; la componente espacial puede informarla.
+Los campos espacial y filogenético son independientes en el prior dados sus
+parámetros. Después de observar las etiquetas, sus distribuciones posteriores
+pueden asociarse o compensarse. Por eso no se deben interpretar sus amplitudes
+como porcentajes causales de geografía y genealogía.
 
-Cada muestra da logits y luego softmax. Se promedian probabilidades, NO logits.
-Los percentiles 2.5 y 97.5 son intervalos creíbles puntuales del 95% de cada
-probabilidad, no intervalos de la etiqueta ni bandas simultáneas.
+## 6. El producto matricial que crea los logits
 
-También se simulan etiquetas de la distribución categórica de cada muestra para
-hacer análisis con múltiples imputaciones. La etiqueta argmax es solo un resumen.
-Se guardan entropía predictiva y diferencia entre entropía de la media y media de
-entropías (información epistémica). Ninguna sustituye estudiar calibración.
+Primero sumamos las tendencias y el intercepto de cada fila:
 
-La incertidumbre incluye coeficientes, hiperparámetros continuos y residual nuevo.
-NO incluye árboles alternativos, errores de etiquetas, coordenadas inciertas,
-otros grados/kernels ni incertidumbre de los priors elegidos. La ausencia de datos
-no se modela como un proceso propio. Sin dominante no significa incertidumbre.
+$$
+H=\mathbf 1_N\alpha^\mathsf T+g+h,
+\qquad H\in\mathbb R^{N\times2}.
+$$
 
-## 7. Módulos y funciones
+La matriz de contrastes que usa el código es:
 
-| Archivo en src/gaussian_processes/bayesian | Funciones | Responsabilidad |
+$$
+A=\sqrt{\frac34}
+\begin{pmatrix}
+1 & 1/\sqrt3\\
+-1 & 1/\sqrt3\\
+0 & -2/\sqrt3
+\end{pmatrix},
+\qquad A\in\mathbb R^{3\times2}.
+$$
+
+Sus tres filas corresponden, en este orden, a OV, Sin dominante y VO. Para
+obtener un puntaje por clase multiplicamos:
+
+$$
+\underbrace{H}_{N\times2}
+\underbrace{A^\mathsf T}_{2\times3}
+=
+\underbrace{\mathcal L}_{N\times3}.
+$$
+
+Para una sola lengua, si $H_i=(u_i,v_i)$, los tres logits son:
+
+$$
+\begin{aligned}
+\ell_{i,\mathrm{OV}}&=\sqrt{3/4}\,(u_i+v_i/\sqrt3),\\
+\ell_{i,\mathrm{Sin\ dominante}}&=\sqrt{3/4}\,(-u_i+v_i/\sqrt3),\\
+\ell_{i,\mathrm{VO}}&=\sqrt{3/4}\,(-2v_i/\sqrt3).
+\end{aligned}
+$$
+
+Por ejemplo, $u_i$ inclina la comparación hacia OV frente a Sin dominante;
+$v_i$ mueve juntas esas dos clases frente a VO. Las dos direcciones son
+simétricas entre las tres categorías. No se agrega un tercer parámetro latente
+independiente para VO: su puntaje se obtiene de las mismas dos coordenadas.
+
+### ¿Por qué dos contrastes producen tres logits?
+
+Se necesitan tres puntajes porque hay tres clases. Sin embargo, los tres logits
+no tienen tres grados de libertad: sumar la misma constante $c$ a todos no
+cambia las probabilidades:
+
+$$
+\operatorname{softmax}(\ell_1+c,\ell_2+c,\ell_3+c)
+=\operatorname{softmax}(\ell_1,\ell_2,\ell_3).
+$$
+
+Por eso un vector de tres logits tiene una dirección redundante. Esta
+parametrización elimina esa dirección imponiendo que los tres logits sumen
+cero. La matriz $A$ cumple $\mathbf 1_3^\mathsf T A=0$, tiene filas de
+longitud uno y productos entre filas de $-1/2$. Así las tres clases reciben
+el mismo tratamiento a priori. **El tercer logit es necesario como puntaje de
+la tercera clase, pero no introduce un tercer efecto latente libre.**
+
+## 7. De logits a probabilidades y respuestas observadas
+
+Los logits son puntajes reales sin límite fijo, no probabilidades. Para cada
+lengua aplicamos softmax:
+
+$$
+p_{ic}=
+\frac{\exp(\ell_{ic})}
+{\sum_{d\in\{\mathrm{OV},\mathrm{Sin\ dominante},\mathrm{VO}\}}
+\exp(\ell_{id})}.
+$$
+
+Cada $p_{ic}$ está entre cero y uno y las tres probabilidades suman uno. Las
+razones entre probabilidades se interpretan directamente a partir de la
+diferencia de logits:
+$p_{ic}/p_{id}=\exp(\ell_{ic}-\ell_{id})$.
+
+Por ejemplo, si $H_i=(1,0)$, los logits son aproximadamente
+$(0.866,-0.866,0)$ y softmax da probabilidades aproximadas
+$(0.626,0.111,0.263)$. La primera clase recibe el mayor puntaje, pero las
+otras dos conservan probabilidad.
+
+Si la etiqueta observada de la lengua $i$ es $y_i$, su probabilidad bajo el
+modelo es $p_{i,y_i}$. La verosimilitud de las etiquetas usadas en el ajuste es:
+
+$$
+p(\mathbf y\mid\text{parámetros})
+=\prod_{i\in\mathrm{train}}p_{i,y_i},
+\qquad
+\log p(\mathbf y\mid\cdot)
+=\sum_{i\in\mathrm{train}}\log p_{i,y_i}.
+$$
+
+Se multiplican solo las probabilidades de las clases que realmente se
+observaron. Una etiqueta faltante no participa en esa verosimilitud.
+
+## 8. Priors y posterior
+
+Los priors actuales están en **config/bayesian.json**:
+
+| Cantidad | Prior | Intuición |
 |---|---|---|
-| design.py | spherical_basis, basis_scales, phylogenetic_design | Álgebra del GP |
-| model.py | categorical_gp | Priors, tendencias y verosimilitud |
-| inference.py | sample_posterior, diagnose | NUTS y diagnósticos |
-| inference.py | prior_predictive, probability_draws | Simulación y predicción conjunta |
-| workflow.py | run_bayesian, fit_stage | Separación, dos ajustes y resultados |
-| workflow.py | summarize_predictions, write_report | Intervalos y reporte |
+| Grado máximo efectivo L | Uniforme continua entre 4 y 16 | Antes de ver etiquetas, todas las posiciones del corte dentro del rango tienen igual densidad previa |
+| σₛ, σ-filo | HalfNormal(1) | Amplitudes no negativas de los dos campos |
+| log(λ) | Normal(media = log(0.001), desvío = 1.5) | Suavidad positiva, con incertidumbre en escala logarítmica |
+| Cada elemento de α | Normal(media = 0, desvío = 1.5) | Tendencia global antes de ver etiquetas |
+| Coeficientes Zₛ y Z-filo | Normal(0, 1), independientes | Variables estándar que, transformadas por las bases, se correlacionan |
 
-## 8. Ejecución y archivos
+La posterior tiene la forma:
 
-```powershell
+$$
+p(L,\alpha,\sigma_s,\sigma_f,\lambda,Z_s,Z_f\mid\mathbf y)
+\ \propto\
+p(\mathbf y\mid L,\alpha,\sigma_s,\sigma_f,\lambda,Z_s,Z_f)
+\ p(L)p(\alpha)p(\sigma_s)p(\sigma_f)p(\lambda)p(Z_s)p(Z_f).
+$$
+
+Los datos informan qué combinaciones de tendencias y parámetros explican las
+etiquetas, mientras los priors regularizan combinaciones extremas. La
+distribución posterior de L indica dónde se ubica el corte espectral más
+compatible con las etiquetas. El árbol, la estructura familiar y la
+definición de kernel siguen fijos: no se promedian árboles ni kernels.
+
+Los límites del prior y el ancho del corte suave están en **config/bayesian.json**.
+El campo **max_degree** de **config/spherical_spline_family.json** solo lo usa
+el modelo clásico; el modelo bayesiano no fija L con ese campo. Los valores
+puntuales de suavidad, amplitud espacial y peso filogenético de ese archivo
+también son propios del flujo clásico. En el flujo bayesiano, L, las amplitudes
+y la suavidad se infieren con sus distribuciones previas.
+
+## 9. Cómo se infieren los parámetros y L
+
+La posterior anterior es muy multidimensional y no se puede integrar a mano.
+NUTS actualiza conjuntamente L, las amplitudes, el suavizado, los interceptos
+y los coeficientes latentes. Evalúa la log-posterior y sus gradientes mediante
+JAX. Esos gradientes guían trayectorias por zonas de probabilidad alta; NUTS
+decide dinámicamente cuándo detener cada recorrido. Tras descartar el
+calentamiento, las muestras conservadas forman una aproximación de la
+distribución posterior conjunta.
+
+El corte logístico hace que el efecto espacial cambie suavemente con L, por lo
+que NUTS puede explorar valores continuos entre 4 y 16. La base tiene dimensión
+fija y llega hasta el máximo configurado. Una muestra con L bajo atenúa más
+los grados altos, pero no los elimina con una máscara dura. El ancho $\tau$
+queda fijo en 0,25 grados; conviene incluirlo en análisis de sensibilidad antes
+de interpretarlo como escala física.
+
+Con la configuración guardada hay cuatro cadenas, 1000 iteraciones de
+calentamiento y 2000 muestras por cadena. Cada ajuste produce 8000 muestras
+posteriores de parámetros. Para calcular predicciones se seleccionan hasta 4000
+estados de forma determinista y repartida entre cadenas.
+
+| Control en config/bayesian.json | Valor actual | Función |
+|---|---:|---|
+| chains | 4 | Cadenas que exploran la posterior desde recorridos distintos |
+| warmup | 1000 | Iteraciones para adaptar el muestreador; luego se descartan |
+| draws | 2000 | Muestras que se guardan por cadena |
+| target_accept | 0.9 | Objetivo de aceptación que regula el tamaño de paso de NUTS |
+| max_tree_depth | 9 | Límite de la trayectoria que construye NUTS |
+| degree_min | 4 | L mínimo permitido por el prior uniforme |
+| degree_max | 16 | L máximo del prior y límite superior de la base |
+| degree_taper_width | 0.25 | Ancho fijo de la transición logística alrededor de L |
+| predictive_draws | 4000 | Máximo de muestras posteriores usadas para predicción |
+| prior_draws | 300 | Escenarios simulados antes del ajuste para revisar los priors |
+
+Se puede cambiar, por ejemplo, **draws** para guardar más muestras. Eso aumenta
+el coste de cada ajuste y no corrige por sí solo una mala mezcla: hay que volver
+a revisar ESS, R-hat, divergencias y saturaciones. El resumen posterior de L se
+informa por separado para evaluación e imputación. Si se concentra cerca del
+límite superior, conviene ampliar el límite de la base y volver a evaluar. La
+distribución aparece en **run.json** y en el histograma de parámetros del
+explorador posterior.
+
+R-hat y ESS se calculan para L y los parámetros globales. R-hat compara la
+variación dentro y entre cadenas; ESS estima cuántas muestras independientes
+equivalentes hay. Los coeficientes latentes se resumen aparte porque son
+muchos y cada uno puede tener mezcla lenta. Son controles de muestreo, no
+medidas de acierto predictivo.
+
+Antes de muestrear, el programa simula 300 escenarios predictivos desde los
+priors, sin etiquetas, y guarda resúmenes en **run.json**. Esto permite revisar
+si los priors implican probabilidades absurdamente extremas; no demuestra por sí
+solo que sean adecuados.
+
+## 10. Por qué hay dos ajustes: evaluar y luego imputar
+
+El flujo completo separa dos objetivos:
+
+| Etapa | Etiquetas conocidas disponibles | Salida |
+|---|---|---|
+| Evaluación | Solo train: 1103 lenguas | Predicciones de las 275 lenguas test |
+| Imputación | Las 1378 lenguas observadas | Predicciones de las 940 lenguas elegibles con respuesta faltante |
+
+En la primera etapa, las etiquetas test no se entregan a NUTS. Sí se pueden usar
+sus coordenadas y sus hojas del árbol para formar la predicción, porque esos
+atributos no son la respuesta que se está ocultando.
+
+Después se inicia otro muestreo NUTS independiente con **todas** las respuestas
+observadas, incluidas las del antiguo test. Por eso las imputaciones no usan
+exactamente las muestras del modelo train-only: vuelven a estimar la posterior
+con más etiquetas. Es el uso correcto de los datos una vez que la evaluación
+está hecha. Las predicciones de test se conservan desde la primera etapa para
+no reportar como test una predicción de un modelo que ya vio esa etiqueta.
+
+## 11. Predicción e incertidumbre
+
+Para cada muestra posterior se usan conjuntamente su L y su suavizado para
+construir el efecto espacial; por tanto, la incertidumbre de L se propaga a la
+predicción. Se calculan los tres logits y se aplica softmax. Después se
+promedian **probabilidades**, no logits:
+
+$$
+\bar p_{ic}=\frac1S\sum_{s=1}^S p_{ic}^{(s)}.
+$$
+
+La clase **predicho** es la de mayor probabilidad media. Los percentiles 2.5 y
+97.5 de las muestras de cada $p_{ic}$ forman un intervalo creíble puntual del
+95% para esa probabilidad. Los extremos de las tres clases no tienen por qué
+sumar uno; cada vector de probabilidades en cada muestra sí suma uno.
+
+Además, el programa simula etiquetas categóricas desde cada muestra posterior.
+Eso permite análisis con múltiples imputaciones y conserva dependencias entre
+lenguas faltantes. Una sola etiqueta de máxima probabilidad es un resumen, no
+una observación confirmada.
+
+- **Entropía predictiva**: incertidumbre de la distribución media entre clases.
+- **Información epistémica**: cuánto cambia la distribución entre muestras
+  posteriores. Se calcula como entropía de la media menos la media de las
+  entropías.
+- **Influencia espacial o filogenética**: cambio entre la predicción completa
+  y un contrafactual que omite un componente. Se mide con
+  $\mathrm{TV}(p,q)=\tfrac12\sum_c|p_c-q_c|$. Es sensibilidad descriptiva,
+  no una fracción causal ni un porcentaje de peso.
+
+La incertidumbre actual incluye variación de parámetros y efectos latentes y
+residuo filogenético condicional para las lenguas objetivo. No incluye árboles
+alternativos, errores de etiqueta, incertidumbre de coordenadas, otras formas
+de kernel, cambios de familia o incertidumbre sobre el mecanismo de datos
+faltantes.
+
+## 12. Archivos, comandos y código
+
+### Comandos
+
+~~~powershell
 uv sync --locked --extra bayesian
-uv run --extra bayesian gaussian-processes bayesian
-uv run --extra bayesian gaussian-processes map --bayesian
-# Cambiar controles/prior usando un JSON propio:
-uv run --extra bayesian gaussian-processes bayesian --sampling-config config/bayesian.json
-```
+uv run gaussian-processes prepare
+uv run gaussian-processes run
 
-Resultados en results/spherical_spline_family/bayesian/:
+# Cambiar el rango/prior continuo de L, otros priors o controles de muestreo:
+# editar config/bayesian.json y volver a ejecutar run
+uv run gaussian-processes run --config config/spherical_spline_family.json --sampling-config config/bayesian.json
 
-- run.json: configuración, priors predictivos, diagnósticos, métricas y hashes.
-- predictions.csv: roles y probabilidades medias con intervalos puntuales del 95%.
-- evaluation.npz: posterior de train y predicciones conjuntas de test.
-- imputation.npz: posterior de todos los observados e imputaciones conjuntas.
-- report.md y map.html: lectura humana de resultados y fichas por lengua.
+# Abrir el mapa y las fichas posteriores ya guardadas:
+uv run gaussian-processes map
 
-Los NPZ guardan muestras de parámetros por cadena y draw, probabilidades, etiquetas
-simuladas y sus IDs. Las probabilidades utilizan una subselección determinista de
-hasta predictive_draws estados equilibrada entre cadenas; se guardan todos los
-coeficientes posteriores. No hay muestreo independiente por lengua.
+# Ejecutar el método clásico como alternativa:
+uv run gaussian-processes classic search
+~~~
 
-```python
-import numpy as np
-run = np.load('results/spherical_spline_family/bayesian/imputation.npz', allow_pickle=False)
-print(run['classes'])
-print(run['target_ids'][:5])
-print(run['probabilities'].shape)  # muestra, lengua, clase
-print(run['posterior_sigma_spatial'].shape)  # cadena, draw
-```
+El comando **prepare** se necesita cuando todavía no están preparados los datos
+y el árbol. **run** ejecuta las dos etapas bayesianas, escribe sus salidas y
+genera mapa y explorador posterior. El antiguo comando **bayesian** se conserva
+como alias de **run**.
 
-Reutilizar el mismo name reemplaza su ejecución. Para comparar configuraciones,
-copia el JSON base y cambia name. Evalúa log-loss, Brier, macro-F1, recall de
-Sin dominante, diagnósticos y sensibilidad a priors, no solo accuracy. El test
-histórico ya se ha consultado; la comparación actual es exploratoria.
+### Dónde encontrar cada operación
+
+| Archivo | Función | Para qué sirve |
+|---|---|---|
+| **bayesian/design.py** | **spherical_basis** | Construye Φ y los grados de cada columna |
+| **bayesian/design.py** | **basis_scales** | Construye Dλ y normaliza la diagonal espacial |
+| **bayesian/design.py** | **phylogenetic_design** | Alinea y factoriza los efectos del árbol |
+| **bayesian/model.py** | **categorical_gp** | Declara priors, efectos, logits y verosimilitud |
+| **bayesian/inference.py** | **sample_posterior** | Ejecuta NUTS para L y los demás parámetros; obtiene diagnósticos |
+| **bayesian/inference.py** | **probability_draws** | Convierte cada muestra en probabilidades conjuntas |
+| **bayesian/workflow.py** | **run_bayesian** | Separa evaluación e imputación y guarda resultados |
+| **bayesian/workflow.py** | **summarize_predictions** | Medias, intervalos, clase y entropías |
+| **bayesian/decomposition.py** | **predictive_components**, **total_variation** | Predicciones completas y sensibilidad contrafactual a cada término |
+| **visualization/posterior.py** | **build_posterior_explorer** | Genera histogramas y fichas de probabilidades por lengua |
+
+### Archivos de salida
+
+Se escriben en **results/spherical_spline_family/bayesian/**:
+
+- **run.json**: configuración, priors, hashes, métricas y diagnósticos.
+- **predictions.csv**: rol de cada fila, clase, probabilidades medias e
+  intervalos.
+- **evaluation.npz**: muestras y predicciones conjuntas del test desde el
+  ajuste train-only.
+- **imputation.npz**: posterior y predicciones conjuntas para faltantes desde
+  el ajuste con todos los observados.
+- **report.md**, **map.html** y **posterior.html**: lecturas y exploración
+  visual de esa ejecución.
+
+Los histogramas por lengua muestran distribuciones de probabilidad entre
+muestras, no un histograma de etiquetas observadas. Los parámetros σₛ, σ-filo
+y λ son globales al ajuste, no valores
+independientes elegidos para cada lengua.
 
 ## Referencias
 
+- [GAM y términos suaves de mgcv](https://rweb.stat.umn.edu/R/library/mgcv/html/gam.html).
+- [Suavizadores GP de rango reducido en mgcv](https://web.mit.edu/r/current/lib/R/library/mgcv/html/smooth.construct.gp.smooth.spec.html).
 - [NUTS, Hoffman y Gelman](https://jmlr.org/papers/v15/hoffman14a.html).
-- [Clasificación GP, Rasmussen y Williams](https://gaussianprocess.org/gpml/chapters/RW3.pdf).
-- [NUTS de NumPyro](https://num.pyro.ai/en/stable/mcmc.html).
-- [Muestreo elíptico](https://proceedings.mlr.press/v9/murray10a.html).
-- [INLA, Martino y Riebler](https://arxiv.org/abs/1907.01248).
-
-## Mapa publicado en GitHub Pages
-
-La [vista mundial interactiva](mapa-bayesiano/) muestra la instantánea de la
-ejecución bayesiana completada. Sus capas permiten alternar datos observados,
-test, train, train junto con test e imputaciones. Al abrir una lengua se ven las
-probabilidades medias y sus intervalos; el enlace de la ficha abre el explorador
-de histogramas posteriores y parámetros globales.
-
-El mapa es una salida pública del proyecto: sus puntos muestran nombres,
-coordenadas WALS, clase observada, predicción y probabilidades. La página conserva
-la atribución de WALS y de los mapas base. No se publican las fuentes descargadas,
-los CSV de resultados ni los archivos NPZ de muestras.
-
-La página conserva una copia de `map.html` y `posterior.html` junto a su índice.
-Después de generar un ajuste y un mapa nuevos, reemplazá esas dos copias desde
-PowerShell y subí el cambio:
-
-```powershell
-uv run --extra bayesian gaussian-processes bayesian
-uv run --extra bayesian gaussian-processes map --bayesian
-Copy-Item results\spherical_spline_family\bayesian\map.html docs\mapa-bayesiano\map.html -Force
-Copy-Item results\spherical_spline_family\bayesian\posterior.html docs\mapa-bayesiano\posterior.html -Force
-git add docs
-git commit -m "Update published Bayesian map"
-git push
-```
-
-El flujo de GitHub Actions reconstruye la página cuando cambia `docs/`. La
-ejecución actual se publica como instantánea; cambiar los resultados locales por
-sí solo no actualiza la web.
-
-## Explorar las distribuciones en la web
-
-`map --bayesian` genera también `posterior.html`, sin volver a muestrear. En las
-fichas de test e imputaciones aparece «Explorar distribuciones e incertidumbre».
-El explorador permite buscar por lengua, código WALS o familia y alternar test
-e imputaciones. Funciona sin conexión; el mapa base sí requiere internet.
-
-- **Predicción final:** tres barras categóricas con medias posteriores que suman 100%.
-- **Probabilidad de cada clase:** histogramas de las muestras, medias e intervalos
-  creíbles puntuales del 95%. La altura es porcentaje de muestras por intervalo.
-- **Parámetros del ajuste:** posteriores de amplitudes, suavizado e interceptos,
-  con trazas de las amplitudes/suavizado y diagnósticos. Son parámetros globales
-  del ajuste correspondiente, no parámetros propios de cada lengua.
-
-`visualization/posterior.py` valida NPZ/CSV/configuración, calcula histogramas y
-genera el HTML. `posterior_assets/` separa estructura, estilo e interacción.
-Los histogramas contienen todas las muestras guardadas de probabilidades; las
-trazas muestran hasta 200 puntos por cadena. No se estiman densidades suavizadas
-ni nuevas posteriores al mover un selector. La tabla F no se grafica como si
-fuera una etiqueta o una probabilidad: sus efectos se reflejan al transformar
-cada muestra en las probabilidades que sí se muestran.
+- [NUTS en NumPyro](https://num.pyro.ai/en/stable/mcmc.html).
+- [Clasificación con procesos gaussianos, Rasmussen y Williams](https://gaussianprocess.org/gpml/chapters/RW3.pdf).

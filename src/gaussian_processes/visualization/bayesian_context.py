@@ -1,7 +1,7 @@
 """Contexto didáctico calculado desde la ejecución guardada, no desde el JSON actual."""
 
 import numpy as np
-from scipy.stats import halfnorm, lognorm, norm
+from scipy.stats import halfnorm, lognorm, norm, uniform
 
 
 def prior_summary(distribution, support, formula, logarithmic=False):
@@ -42,6 +42,11 @@ def build_bayesian_context(provenance):
     median, log_sd = s["smoothing_median"], s["smoothing_log_sd"]
     return {
         "priors": {
+            "Grado máximo efectivo L": prior_summary(
+                uniform(loc=s["degree_min"], scale=s["degree_max"] - s["degree_min"]),
+                f"{s['degree_min']} ≤ L ≤ {s['degree_max']}",
+                f"L ~ Uniforme({s['degree_min']}, {s['degree_max']})",
+            ),
             "Amplitudes espacial y filogenética (cada una)": prior_summary(
                 halfnorm(scale=amplitude),
                 "σ ≥ 0; sin máximo finito",
@@ -64,6 +69,12 @@ def build_bayesian_context(provenance):
         },
         "configuration": provenance["configuration"],
         "sampling": s,
+        "degree_prior": {
+            "type": "Uniforme continuo",
+            "lower": s["degree_min"],
+            "upper": s["degree_max"],
+            "taper_width": s["degree_taper_width"],
+        },
         "counts": {
             k: provenance[k] for k in ["n_train", "n_test", "n_final_fit", "n_imputed"]
         },

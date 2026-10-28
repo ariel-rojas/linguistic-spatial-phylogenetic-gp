@@ -30,6 +30,21 @@ class BayesianDesignTests(unittest.TestCase):
                 atol=1e-12,
             )
 
+    def test_narrow_soft_cutoff_approaches_truncated_kernel(self):
+        latitude = np.array([90, -90, 0, 45, -30])
+        longitude = np.array([0, 180, 179, -179, 45])
+        xyz = coordinates_xyz(latitude, longitude)
+        basis, degrees = spherical_basis(latitude, longitude, 8)
+        for max_degree in [2, 4, 8]:
+            weighted = basis * basis_scales(
+                degrees, 0.001, max_degree, taper_width=1e-4
+            )
+            assert_allclose(
+                weighted @ weighted.T,
+                SphericalSplineKernel(max_degree, 0.001)(xyz),
+                atol=1e-12,
+            )
+
     def test_symmetric_class_prior(self):
         assert_allclose(CLASS_CONTRASTS.sum(axis=0), 0, atol=1e-14)
         expected = np.full((3, 3), -0.5)
@@ -57,12 +72,20 @@ class BayesianDesignTests(unittest.TestCase):
 
         settings = load_sampling_settings("config/bayesian.json")
         b, d = spherical_basis([0, 1, 2], [0, 1, 2], 2)
+        settings = {
+            **settings,
+            "degree_min": 0.5,
+            "degree_max": 2,
+            "degree_taper_width": 0.25,
+        }
         traced = trace(seed(categorical_gp, jax.random.PRNGKey(2))).get_trace(
             b, d, np.eye(3), settings, np.array([0, 1, 2])
         )
         self.assertTrue(traced["observed"]["is_observed"])
         self.assertEqual(traced["observed"]["value"].shape, (3,))
         self.assertEqual(traced["z_spatial"]["value"].shape, (9, 2))
+        self.assertGreaterEqual(float(traced["max_degree"]["value"]), 0.5)
+        self.assertLessEqual(float(traced["max_degree"]["value"]), 2)
         from gaussian_processes.bayesian.inference import probability_draws
 
         samples = {
@@ -71,6 +94,7 @@ class BayesianDesignTests(unittest.TestCase):
                 "sigma_spatial",
                 "sigma_phylogenetic",
                 "smoothing",
+                "max_degree",
                 "intercept",
                 "z_spatial",
                 "z_phylogenetic",
@@ -81,13 +105,52 @@ class BayesianDesignTests(unittest.TestCase):
         from jax.experimental.sparse import BCOO
 
         sparse_trace = trace(seed(categorical_gp, jax.random.PRNGKey(2))).get_trace(
-            b, d, BCOO.fromdense(np.eye(3)), settings, np.array([0, 1, 2])
+            b,
+            d,
+            BCOO.fromdense(np.eye(3)),
+            settings,
+            np.array([0, 1, 2]),
         )
         assert_allclose(
             sparse_trace["observed"]["fn"].probs,
             traced["observed"]["fn"].probs,
             atol=1e-12,
         )
+
+    @unittest.skipUnless(importlib.util.find_spec("numpyro"), "Requiere extra bayesian")
+    def test_soft_degree_cutoff_keeps_gradients_finite(self):
+        import jax
+        import jax.numpy as jnp
+        from numpyro.handlers import condition, seed, trace
+        from numpyro.infer.util import log_density
+
+        from gaussian_processes.bayesian.model import categorical_gp
+        from gaussian_processes.bayesian.workflow import load_sampling_settings
+
+        settings = load_sampling_settings("config/bayesian.json")
+        basis, degrees = spherical_basis([0, 20, -30, 45], [0, 30, 80, -50], 8)
+        labels = jnp.asarray([0, 1, 2, 0])
+        factor = jnp.eye(4)
+        args = (basis, degrees, factor, settings, labels)
+
+        def model(*model_args):
+            return condition(categorical_gp, data={"max_degree": jnp.array(8.0)})(
+                *model_args
+            )
+
+        traced = trace(seed(model, jax.random.PRNGKey(12))).get_trace(*args)
+        parameters = {
+            name: site["value"]
+            for name, site in traced.items()
+            if site["type"] == "sample" and not site["is_observed"]
+        }
+
+        def log_posterior(degree):
+            values = {**parameters, "max_degree": degree}
+            return log_density(model, args, {}, values)[0]
+
+        gradient = jax.grad(log_posterior)(jnp.array(8.0))
+        self.assertTrue(np.isfinite(np.asarray(gradient)).all())
 
     @unittest.skipUnless(importlib.util.find_spec("numpyro"), "Requiere extra bayesian")
     def test_probabilities_average_after_softmax(self):

@@ -7,7 +7,8 @@ from .design import CLASS_CONTRASTS, basis_scales
 
 
 def predictive_components(
-    samples, basis, degrees, conditional_mean, residual_factor, seed
+    samples, basis, degrees, conditional_mean, residual_factor, seed,
+    degree_taper_width=0.25,
 ):
     """Devuelve p completa y dos contrafactuales que omiten un efecto cada uno.
 
@@ -27,7 +28,12 @@ def predictive_components(
         spatial = samples["sigma_spatial"][draw] * (
             basis
             @ (
-                basis_scales(degrees, samples["smoothing"][draw])[:, None]
+                basis_scales(
+                    degrees,
+                    samples["smoothing"][draw],
+                    samples["max_degree"][draw],
+                    degree_taper_width,
+                )[:, None]
                 * samples["z_spatial"][draw]
             )
         )

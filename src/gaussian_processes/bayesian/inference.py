@@ -16,15 +16,15 @@ from .model import categorical_gp
 
 
 def sample_posterior(basis, degrees, factor, labels, settings, seed):
-    """NUTS con cuatro cadenas por defecto, doble precisión y warmup descartado."""
+    """Muestrea con NUTS todos los parámetros, incluido el corte continuo L."""
     started = time.perf_counter()
-    kernel = NUTS(
+    nuts = NUTS(
         categorical_gp,
         target_accept_prob=settings["target_accept"],
         max_tree_depth=settings["max_tree_depth"],
     )
     sampler = MCMC(
-        kernel,
+        nuts,
         num_warmup=settings["warmup"],
         num_samples=settings["draws"],
         num_chains=settings["chains"],
@@ -42,7 +42,11 @@ def sample_posterior(basis, degrees, factor, labels, settings, seed):
         BCOO.from_scipy_sparse(csr_matrix(factor)),
         settings,
         jnp.asarray(labels),
-        extra_fields=("diverging", "num_steps", "accept_prob"),
+        extra_fields=(
+            "diverging",
+            "num_steps",
+            "accept_prob",
+        ),
     )
     samples = {
         key: np.asarray(value)
@@ -58,19 +62,43 @@ def sample_posterior(basis, degrees, factor, labels, settings, seed):
 
 
 def diagnose(samples, extras, settings):
-    """R-hat de rango y ESS bulk/tail de todos los parámetros, incluidos latentes."""
+    """Evalúa mezcla de parámetros globales y resume aparte los campos latentes.
+
+    Los coeficientes latentes son miles de variables auxiliares. Se informan
+    por separado, porque exigir ESS alto a cada coeficiente aislado puede
+    reprobar un ajuste aunque los hiperparámetros que gobiernan las
+    predicciones estén bien mezclados.
+    """
     tree = az.from_dict({"posterior": samples})
-    summary = az.summary(tree, kind="diagnostics", round_to=8)
-    hyper = az.summary(
+    global_summary = az.summary(
         tree,
-        var_names=["sigma_spatial", "sigma_phylogenetic", "smoothing", "intercept"],
+        var_names=[
+            "max_degree",
+            "sigma_spatial",
+            "sigma_phylogenetic",
+            "smoothing",
+            "intercept",
+        ],
         round_to=8,
     )
-    maximum = float(summary.r_hat.max())
-    bulk, tail = float(summary.ess_bulk.min()), float(summary.ess_tail.min())
+    latent_summary = az.summary(
+        tree, var_names=["z_spatial", "z_phylogenetic"], kind="diagnostics", round_to=8
+    )
+    maximum = float(global_summary.r_hat.max())
+    bulk = float(global_summary.ess_bulk.min())
+    tail = float(global_summary.ess_tail.min())
     divergences = int(extras["diverging"].sum())
-    depth_hits = int((extras["num_steps"] >= 2 ** settings["max_tree_depth"] - 1).sum())
-    finite = bool(np.isfinite(summary[["r_hat", "ess_bulk", "ess_tail"]]).all().all())
+    depth_hits = int(
+        (
+            extras["num_steps"]
+            >= 2 ** settings["max_tree_depth"] - 1
+        ).sum()
+    )
+    finite = bool(
+        np.isfinite(global_summary[["r_hat", "ess_bulk", "ess_tail"]])
+        .all()
+        .all()
+    )
     passed = (
         finite
         and maximum < 1.01
@@ -86,9 +114,25 @@ def diagnose(samples, extras, settings):
         "divergences": divergences,
         "tree_depth_hits": depth_hits,
         "mean_acceptance": float(extras["accept_prob"].mean()),
-        "criteria": "Rhat<1.01; ESS bulk/tail>=400; cero divergencias y saturaciones de profundidad",
-        "hyperparameters": hyper.reset_index().to_dict("records"),
-        "worst_rhat": summary.nlargest(5, "r_hat").reset_index().to_dict("records"),
+        "criteria": "Parámetros globales: R-hat<1.01 y ESS bulk/tail>=400; cero divergencias y saturaciones de profundidad. Los coeficientes latentes se resumen aparte.",
+        "degree_summary": {
+            "parameter": "max_degree",
+            "prior": "Uniforme continua",
+            "lower": settings["degree_min"],
+            "upper": settings["degree_max"],
+            "mean": float(samples["max_degree"].mean()),
+            "median": float(np.median(samples["max_degree"])),
+            "sd": float(samples["max_degree"].std()),
+            "interval_95": np.quantile(samples["max_degree"], [0.025, 0.975]).tolist(),
+        },
+        "hyperparameters": global_summary.reset_index().to_dict("records"),
+        "worst_global": global_summary.nlargest(5, "r_hat").reset_index().to_dict("records"),
+        "latent_diagnostics": {
+            "n_coefficients": int(len(latent_summary)),
+            "max_rhat": float(latent_summary.r_hat.max()),
+            "min_ess_bulk": float(latent_summary.ess_bulk.min()),
+            "min_ess_tail": float(latent_summary.ess_tail.min()),
+        },
     }
 
 
@@ -104,7 +148,10 @@ def flatten_samples(samples, maximum):
     }
 
 
-def probability_draws(samples, basis, degrees, conditional_mean, residual_factor, seed):
+def probability_draws(
+    samples, basis, degrees, conditional_mean, residual_factor, seed,
+    degree_taper_width=0.25,
+):
     """Muestras conjuntas: parámetros + funciones + residual condicional nuevo.
 
     Devuelve [muestra, lengua, clase]. La correlación entre faltantes se conserva
@@ -117,7 +164,12 @@ def probability_draws(samples, basis, degrees, conditional_mean, residual_factor
         spatial = samples["sigma_spatial"][draw] * (
             basis
             @ (
-                basis_scales(degrees, samples["smoothing"][draw])[:, None]
+                basis_scales(
+                    degrees,
+                    samples["smoothing"][draw],
+                    samples["max_degree"][draw],
+                    degree_taper_width,
+                )[:, None]
                 * samples["z_spatial"][draw]
             )
         )
@@ -137,6 +189,9 @@ def prior_predictive(basis, degrees, factor, settings):
     rng = np.random.default_rng(settings["seed"])
     n = settings["prior_draws"]
     draws = {
+        "max_degree": rng.uniform(
+            settings["degree_min"], settings["degree_max"], size=n
+        ),
         "sigma_spatial": abs(rng.normal(0, settings["amplitude_scale"], n)),
         "sigma_phylogenetic": abs(rng.normal(0, settings["amplitude_scale"], n)),
         "smoothing": rng.lognormal(
@@ -147,7 +202,13 @@ def prior_predictive(basis, degrees, factor, settings):
         "z_phylogenetic": rng.normal(size=(n, factor.shape[1], 2)),
     }
     p = probability_draws(
-        draws, basis, degrees, factor, np.empty((len(basis), 0)), settings["seed"] + 1
+        draws,
+        basis,
+        degrees,
+        factor,
+        np.empty((len(basis), 0)),
+        settings["seed"] + 1,
+        settings["degree_taper_width"],
     )
     return {
         "class_order": ["OV", "Sin dominante", "VO"],

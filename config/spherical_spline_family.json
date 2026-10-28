@@ -6,7 +6,7 @@
   "spatial_variance": 1.0,
   "phylogenetic_rate": 1.0368093806633225,
   "test_fraction": 0.2,
-  "seed": 42,
+  "seed": 20261026,
   "test_family": "indo1319",
   "cv_folds": 3,
   "phylogeny_manifest": "datos/phylogeny/manifest.json",

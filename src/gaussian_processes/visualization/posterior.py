@@ -66,7 +66,7 @@ def build_posterior_payload(folder, provenance, predictions):
                     basis, degrees = spherical_basis(
                         eligible.Latitude,
                         eligible.Longitude,
-                        provenance["configuration"]["max_degree"],
+                        provenance["sampling"]["degree_max"],
                     )
                 by_id = eligible.set_index("ID")
                 fit = by_id.loc[archive["fit_ids"]]
@@ -93,6 +93,7 @@ def build_posterior_payload(folder, provenance, predictions):
                     provenance["sampling"]["seed"]
                     + (0 if stage == "evaluation" else 100)
                     + 1,
+                    provenance["sampling"]["degree_taper_width"],
                 )
                 if not np.allclose(result["full"], probabilities, atol=2e-6):
                     raise ValueError(
@@ -146,7 +147,12 @@ def build_posterior_payload(folder, provenance, predictions):
                     }
                 )
             parameters = {}
-            for name in ["sigma_spatial", "sigma_phylogenetic", "smoothing"]:
+            for name in [
+                "max_degree",
+                "sigma_spatial",
+                "sigma_phylogenetic",
+                "smoothing",
+            ]:
                 values = archive["posterior_" + name]
                 parameters[name] = distribution_summary(values)
                 # Las trazas son una vista resumida; los diagnósticos usan todos los draws.
@@ -161,6 +167,7 @@ def build_posterior_payload(folder, provenance, predictions):
                 )
             stages[stage] = {
                 "parameters": parameters,
+                "degree_summary": provenance[diagnostic]["degree_summary"],
                 "diagnostics": provenance[diagnostic],
                 "n_fit": len(archive["fit_ids"]),
                 "latent_shapes": {

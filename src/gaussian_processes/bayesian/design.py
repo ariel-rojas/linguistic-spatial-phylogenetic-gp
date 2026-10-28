@@ -2,10 +2,14 @@
 
 import numpy as np
 from scipy.linalg import solve_triangular
+from scipy.special import expit
 from scipy.special import sph_harm_y
 
-# Dos contrastes ortogonales y simétricos: cada logit tiene varianza unitaria
-# si los dos contrastes tienen varianza uno. El orden sigue CLASSES.
+# Filas: clases; columnas: dos contrastes latentes. Las filas tienen norma uno,
+# productos mutuos -1/2 y suman cero entre clases. Proyectar dos coordenadas con
+# A.T produce tres logits sin el desplazamiento común redundante de softmax.
+# Con contrastes independientes de varianza uno, cada logit tiene varianza uno.
+# El orden de filas sigue CLASSES.
 CLASS_CONTRASTS = np.array(
     [[1, 1 / np.sqrt(3)], [-1, 1 / np.sqrt(3)], [0, -2 / np.sqrt(3)]]
 ) * np.sqrt(3 / 4)
@@ -31,9 +35,18 @@ def spherical_basis(latitude, longitude, max_degree):
     return np.column_stack(columns) * np.sqrt(4 * np.pi), np.asarray(degrees)
 
 
-def basis_scales(degrees, smoothing):
-    """Desviación de coeficientes que da diagonal uno al kernel espacial."""
+def basis_scales(degrees, smoothing, max_degree=None, taper_width=0.25):
+    """Escalas espectrales con corte suave y diferenciable alrededor de L.
+
+    El corte continuo permite que NUTS estime L mediante gradientes. Una
+    transición logística centrada entre grados mantiene la interpretación de
+    L como grado máximo efectivo y evita la máscara dura no diferenciable.
+    """
     weights = 1 / (1 + smoothing * (degrees * (degrees + 1)) ** 2)
+    if max_degree is not None:
+        if taper_width <= 0:
+            raise ValueError("taper_width debe ser positivo")
+        weights = weights * expit((max_degree + 0.5 - degrees) / taper_width)
     return np.sqrt(weights / weights.sum())
 
 

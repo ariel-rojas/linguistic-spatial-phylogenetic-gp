@@ -9,6 +9,9 @@
   "intercept_scale": 1.5,
   "smoothing_median": 0.001,
   "smoothing_log_sd": 1.5,
+  "degree_min": 4,
+  "degree_max": 16,
+  "degree_taper_width": 0.25,
   "prior_draws": 300,
-  "seed": 20261021
+  "seed": 20261026
 }

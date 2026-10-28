@@ -1,1 +1,1 @@
-"""Clasificación GP bayesiana: bases exactas, NUTS y predicción conjunta."""
+"""Clasificación GP bayesiana con armónicos esféricos y NUTS."""

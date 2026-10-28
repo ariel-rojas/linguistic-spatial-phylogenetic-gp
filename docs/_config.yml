@@ -1,5 +1,5 @@
-title: Imputación lingüística con modelos gaussianos
-description: Covarianza espacial y filogenética para estudiar features lingüísticas
+title: Imputación lingüística con procesos gaussianos
+description: Guías del flujo, los kernels espaciales y filogenéticos y la inferencia bayesiana
 markdown: kramdown
 plugins:
   - jekyll-relative-links
@@ -7,5 +7,4 @@ relative_links:
   enabled: true
   collections: false
 exclude:
-  - phylogenetic_report.md
   - images/map.jpg

@@ -1,4 +1,4 @@
-"""Dos ajustes independientes: evaluar sobre train y después imputar con todos."""
+"""Flujo estándar: evaluación bayesiana train/test y posterior de imputación."""
 
 import hashlib
 import json
@@ -35,6 +35,9 @@ def load_sampling_settings(filename):
         "intercept_scale",
         "smoothing_median",
         "smoothing_log_sd",
+        "degree_min",
+        "degree_max",
+        "degree_taper_width",
         "prior_draws",
         "predictive_draws",
         "seed",
@@ -54,12 +57,15 @@ def load_sampling_settings(filename):
         "warmup",
         "draws",
         "max_tree_depth",
+        "degree_max",
         "prior_draws",
         "predictive_draws",
         "seed",
     ]:
         if type(settings[key]) is not int:
             raise ValueError(f"{key} debe ser entero")
+    if settings["degree_min"] >= settings["degree_max"]:
+        raise ValueError("degree_min debe ser menor que degree_max")
     if (
         settings["chains"] < 2
         or settings["draws"] < 4
@@ -108,11 +114,22 @@ def fit_stage(
     )
     labels = np.array([CLASSES.index(label) for label in fit.observado])
     samples, extras, diagnostics = sample_posterior(
-        basis[fit_indices], degrees, factor, labels, settings, seed
+        basis[fit_indices],
+        degrees,
+        factor,
+        labels,
+        settings,
+        seed,
     )
     selected = flatten_samples(samples, settings["predictive_draws"])
     components = predictive_components(
-        selected, basis[target_indices], degrees, mean, residual, seed + 1
+        selected,
+        basis[target_indices],
+        degrees,
+        mean,
+        residual,
+        seed + 1,
+        settings["degree_taper_width"],
     )
     probabilities = components["full"]
     spatial_influence = total_variation(probabilities, components["without_spatial"])
@@ -121,7 +138,13 @@ def fit_stage(
     )
     # Comprobación posterior predictiva en train, nunca usada como métrica test.
     training_p = probability_draws(
-        selected, basis[fit_indices], degrees, factor, np.empty((len(fit), 0)), seed + 2
+        selected,
+        basis[fit_indices],
+        degrees,
+        factor,
+        np.empty((len(fit), 0)),
+        seed + 2,
+        settings["degree_taper_width"],
     )
     rng = np.random.default_rng(seed + 3)
     replicated = (
@@ -176,7 +199,9 @@ def run_bayesian(filename, sampling_filename):
     train_relative, test_relative = split_data(eligible.iloc[known], config)
     train, test = known[train_relative], known[test_relative]
     basis, degrees = spherical_basis(
-        eligible.Latitude, eligible.Longitude, config["max_degree"]
+        eligible.Latitude,
+        eligible.Longitude,
+        settings["degree_max"],
     )
     prior_factor, _, _, _ = phylogenetic_design(
         covariance,
@@ -187,7 +212,15 @@ def run_bayesian(filename, sampling_filename):
         "status": "running",
         "configuration": config,
         "sampling": settings,
-        "selection": "bayesian_nuts",
+        "selection": "bayesian_continuous_degree_nuts",
+        "degree_inference": {
+            "parameter": "max_degree",
+            "lower": settings["degree_min"],
+            "upper": settings["degree_max"],
+            "taper_width": settings["degree_taper_width"],
+            "prior": "uniforme continuo",
+            "interpretation": "centro del corte logístico suave de los armónicos",
+        },
         "classes": CLASSES,
         "data_sha256": hashlib.sha256(
             (ROOT / "datos/lenguas.csv").read_bytes()
@@ -205,8 +238,8 @@ def run_bayesian(filename, sampling_filename):
             basis[train], degrees, prior_factor, settings
         ),
         "limitations": [
-            "MCC, familias y grado espacial fijos",
-            "Test histórico reutilizado: comparación exploratoria",
+            "MCC y familias fijos; L se infiere dentro del intervalo configurado",
+            "Una partición aleatoria nueva; sigue siendo una evaluación única y no una validación externa independiente",
             "Categórica conjunta distinta de OvR sklearn",
             "Muestreo condicionado a priors; no es prueba de calibración",
         ],
@@ -228,6 +261,9 @@ def run_bayesian(filename, sampling_filename):
         tested.observado, tested[PROBABILITY_COLUMNS]
     )
     summary["evaluation_diagnostics"] = diagnostics
+    summary["degree_inference"]["evaluation_posterior"] = diagnostics[
+        "degree_summary"
+    ]
     write_json(folder / "run.json", summary)
     print(
         json.dumps(
@@ -251,6 +287,9 @@ def run_bayesian(filename, sampling_filename):
         folder / "imputation.npz",
     )
     summary["imputation_diagnostics"] = diagnostics
+    summary["degree_inference"]["imputation_posterior"] = diagnostics[
+        "degree_summary"
+    ]
     summary["status"] = (
         "complete"
         if diagnostics["passed"] and summary["evaluation_diagnostics"]["passed"]
@@ -306,7 +345,22 @@ def write_report(folder, summary):
         f"Test: {m['correct']}/{m['n_test']} aciertos; log-loss {m['log_loss']:.5f}; macro-F1 {m['macro_f1']:.5f}; Brier {m['brier_multiclass']:.5f}.",
         f"Imputaciones sin verificar: {summary['n_imputed']}. No se utilizan para medir aciertos.",
         "",
-        "| Ajuste | R-hat máximo | ESS bulk mínimo | ESS tail mínimo | Divergencias | Profundidad máxima alcanzada |",
+        "## Posterior del grado efectivo L",
+        "",
+        "| Ajuste | Media | Mediana | Intervalo creíble 95 % | Prior |",
+        "|---|---:|---:|---:|---|",
+    ]
+    for title, key in [
+        ("Evaluación train/test", "evaluation_diagnostics"),
+        ("Ajuste final de imputación", "imputation_diagnostics"),
+    ]:
+        degree = summary[key]["degree_summary"]
+        lines.append(
+            f"| {title} | {degree['mean']:.2f} | {degree['median']:.2f} | {degree['interval_95'][0]:.2f}–{degree['interval_95'][1]:.2f} | Uniforme({degree['lower']}, {degree['upper']}) |"
+        )
+    lines += [
+        "",
+        "| Ajuste | R-hat global máx. | ESS bulk global mín. | ESS tail global mín. | Divergencias | Profundidad máxima alcanzada |",
         "|---|---:|---:|---:|---:|---:|",
     ]
     for title, key in [
@@ -319,7 +373,20 @@ def write_report(folder, summary):
         )
     lines += [
         "",
-        "Si el estado es diagnostics_warning, las cifras son exploratorias y requieren mejorar/revisar el muestreo.",
+        "| Ajuste | R-hat máx. de coeficientes latentes | ESS bulk mín. de coeficientes latentes | ESS tail mín. de coeficientes latentes |",
+        "|---|---:|---:|---:|",
+    ]
+    for title, key in [
+        ("Train", "evaluation_diagnostics"),
+        ("Todos los observados", "imputation_diagnostics"),
+    ]:
+        d = summary[key]["latent_diagnostics"]
+        lines.append(
+            f"| {title} ({d['n_coefficients']} coeficientes) | {d['max_rhat']:.4f} | {d['min_ess_bulk']:.1f} | {d['min_ess_tail']:.1f} |"
+        )
+    lines += [
+        "",
+        "El estado evalúa los parámetros globales y los problemas de NUTS. Los coeficientes latentes se informan aparte: valores bajos de ESS o altos de R-hat recomiendan más muestras o revisar la parametrización antes de interpretar cada campo local.",
         "",
         "## Archivos",
         "",
@@ -329,7 +396,7 @@ def write_report(folder, summary):
         "- `map.html`: test, train e imputaciones con intervalos en las fichas.",
         "- `posterior.html`: búsqueda por lengua, histogramas de probabilidades, predictiva categórica y posteriores de parámetros globales.",
         "",
-        "El motor es NumPyro/NUTS. No hay grid search ni evidencia de convergencia basada solo en accuracy.",
+        "NUTS estima L continuo y los demás parámetros conjuntos; no hay grid search ni evidencia de convergencia basada solo en accuracy.",
         "La incertidumbre no incluye árboles alternativos, errores de WALS ni cambios de familia de kernel.",
     ]
     (folder / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

@@ -20,9 +20,9 @@ function renderWorkflow() {
     <p><strong>${n.n_train} train → posterior de evaluación → ${n.n_test} test.</strong><br><strong>${n.n_final_fit} observados → nueva posterior final → ${n.n_imputed} imputaciones.</strong> Las etiquetas de test no intervienen en el primer ajuste; sí en el ajuste final. Las imputaciones no se usan para medir aciertos.</p>
     <p>Separación estratificada por identidad: una de ${Math.round(1 / c.test_fraction)} particiones, semilla ${c.seed}. Intenta conservar las proporciones de clases y mantiene juntas las identidades compartidas. No reserva familias ni regiones completas.</p>
     <h3>2 · θ: qué se estima y dónde entra</h3>
-    <p><code>θ = (σ espacial, σ filogenética, λ, α, Z espacial, Z filogenético)</code>. Se muestrean conjuntamente. F se deriva de θ; no es otro parámetro independiente.</p>
-    <div class="equation">wⱼ(λ) = 1 / {1 + λ [ℓⱼ(ℓⱼ+1)]²}<br>dⱼ = √(wⱼ / Σᵣ wᵣ)<br>g = σ espacial · Φ · diag(d) · Z espacial<br>h = σ filogenética · L · Z filogenético<br>F = g + h<br>u = α + F</div>
-    <p>Φ evalúa los armónicos esféricos en las coordenadas; ℓⱼ es el grado de cada armónico. λ atenúa los detalles finos. L es un factor de la correlación filogenética (R = LLᵀ), alineado con las lenguas: transforma coeficientes independientes en efectos correlacionados. Los Z tienen dos columnas, una por contraste. α se suma a todas las filas.</p>
+    <p><code>θ = (L, σ espacial, σ filogenética, λ, α, Z espacial, Z filogenético)</code>. NUTS actualiza conjuntamente todos los parámetros continuos, incluido L. F se deriva de estos valores; no es otro parámetro independiente.</p>
+    <div class="equation">wⱼ(λ,L) = logistic((L + 1/2 − ℓⱼ) / τ) / {1 + λ [ℓⱼ(ℓⱼ+1)]²}<br>dⱼ = √(wⱼ / Σᵣ wᵣ)<br>g = σ espacial · Φ · diag(d) · Z espacial<br>h = σ filogenética · Lᵣ · Z filogenético<br>F = g + h<br>u = α + F</div>
+    <p>Φ evalúa los armónicos esféricos; ℓⱼ es el grado de cada columna y τ fija el ancho de la transición. L determina dónde cae el corte suave: grados por debajo reciben más peso y los superiores se atenúan progresivamente. La base llega hasta el límite superior configurado. λ también reduce los detalles finos. Lᵣ factoriza la correlación filogenética (R = LᵣLᵣᵀ) y transforma coeficientes independientes en efectos correlacionados. Los Z tienen dos columnas, una por contraste. α se suma a todas las filas.</p>
     <p>Las amplitudes multiplican efectos; sus cuadrados multiplican covarianzas: <code>K = σ espacial² R espacial(λ) + σ filogenética² R filogenética</code>. No son porcentajes de influencia ni atribuciones causales.</p>
     ${table(
       ["Ajuste", "Z espacial", "Z filogenético"],
@@ -33,7 +33,7 @@ function renderWorkflow() {
       ]),
     )}
     <h3>3 · Priors y rangos: antes de observar etiquetas</h3>
-    <p><strong>No hay una grilla ni límites mínimos/máximos de búsqueda.</strong> El soporte indica qué valores permite el prior; el intervalo central del 95 % indica dónde concentra su masa, pero permite valores fuera. El intervalo posterior, en «Parámetros del ajuste», se calcula después de usar los datos. El mínimo/máximo visible de un gráfico tampoco es un límite del modelo.</p>
+    <p><strong>No hay una grilla de búsqueda.</strong> L tiene un prior uniforme acotado; el intervalo posterior de «Parámetros del ajuste» se calcula después de observar las etiquetas. Para los demás parámetros, el soporte indicado deriva de sus distribuciones previas.</p>
     <div class="grid">${priorCards}</div>
     <h3>4 · De dos contrastes a tres clases y a la posterior</h3>
     <div class="equation">η OV = (√3/2)u₁ + u₂/2<br>η Sin dominante = −(√3/2)u₁ + u₂/2<br>η VO = −u₂<br>πᵢ꜀ = exp(ηᵢ꜀) / Σᵣ exp(ηᵢᵣ)<br>yᵢ ~ Categorical(πᵢ)<br>p(θ | datos) ∝ [Πᵢ πᵢ,clase observada] · p(θ)</div>
@@ -52,10 +52,13 @@ function renderWorkflow() {
         ],
         ["Aceptación objetivo", s.target_accept],
         ["Profundidad máxima", s.max_tree_depth],
+        ["Prior de L", `${w.degree_prior.type} entre ${w.degree_prior.lower} y ${w.degree_prior.upper}`],
+        ["Ancho fijo del corte suave τ", s.degree_taper_width],
+        ["Máximo grado de la base", s.degree_max],
         ["Semilla base del muestreo", s.seed],
       ],
     )}
-    <p>NUTS adapta sus pasos durante warmup y luego explora la posterior conjunta. Cada iteración puede contener muchos pasos internos. Las muestras están correlacionadas: el ESS mide información efectiva. Para lenguas nuevas se evalúa la superficie espacial y se simula el residual filogenético condicional. Se aplica softmax a cada muestra y después se promedian las probabilidades; no al revés.</p>
+    <p>NUTS adapta sus pasos durante warmup y luego explora la posterior conjunta de L y los demás parámetros. Cada iteración puede contener muchos pasos internos. Las muestras están correlacionadas: el ESS mide información efectiva. Para lenguas nuevas se evalúa la superficie espacial y se simula el residual filogenético condicional. Se aplica softmax a cada muestra y después se promedian las probabilidades; no al revés.</p>
     <h3>6 · Qué predecía el prior y cómo rindió el modelo</h3>
     <p>Antes del ajuste se simularon ${s.prior_draws} escenarios. Esta tabla muestra cuantiles de la <strong>fracción esperada de registros por clase</strong>, no hablantes ni probabilidades de una lengua concreta. No usa etiquetas y no mide performance.</p>
     ${table(
@@ -87,8 +90,16 @@ function renderWorkflow() {
       }),
     )}
     <p>La accuracy mide aciertos globales; balanced accuracy promedia recalls; macro-F1 da el mismo peso a cada clase. Log-loss y Brier evalúan probabilidades. Los diagnósticos de cadenas están en «Parámetros del ajuste»: una buena accuracy no prueba convergencia.</p>
-    <h3>7 · Qué queda fijo y dónde revisar los archivos</h3>
-    <p>Grado espacial máximo: ${c.max_degree}. Estructura filogenética: ${escapeText(c.phylogenetic_structure)}. Normalización: ${c.phylogenetic_normalize ? "sí" : "no"}. Con within_family, Rᵢⱼ = 0 entre familias; si se normaliza, Rᵢⱼ = Cᵢⱼ / √(Cᵢᵢ Cⱼⱼ) dentro de cada bloque.</p>
+    <h3>7 · Posterior del grado efectivo L y supuestos fijos</h3>
+    <p>El prior de L es uniforme continuo entre ${w.degree_prior.lower} y ${w.degree_prior.upper}. La tabla resume dos posteriores independientes: evaluación (solo train) e imputación (todos los observados).</p>
+    ${table(
+      ["Ajuste", "Media posterior de L", "Mediana", "Intervalo creíble 95 %"],
+      ["evaluation", "imputation"].map((name) => {
+        const d = data.stages[name].degree_summary;
+        return [name === "evaluation" ? "Evaluación" : "Imputación", num(d.mean), num(d.median), `${num(d.interval_95[0])}–${num(d.interval_95[1])}`];
+      }),
+    )}
+    <p>La base se construye hasta L = ${s.degree_max}; en cada muestra se ponderan sus columnas con el corte logístico de ancho τ = ${s.degree_taper_width}, lo que mantiene la dependencia diferenciable para NUTS. Estructura filogenética: ${escapeText(c.phylogenetic_structure)}. Normalización: ${c.phylogenetic_normalize ? "sí" : "no"}. Con within_family, Rᵢⱼ = 0 entre familias; si se normaliza, Rᵢⱼ = Cᵢⱼ / √(Cᵢᵢ Cⱼⱼ) dentro de cada bloque.</p>
     <p>No se integran árboles alternativos, errores de etiquetas ni otras estructuras de kernel. Los valores puntuales y la grilla de sklearn no son priors de NUTS. El modo espacial constante y el intercepto pueden explicar una tendencia común: no interpretamos sus contribuciones constantes por separado.</p>
     <p><a href="report.md">Reporte resumido</a> · <a href="run.json">Registro completo de esta ejecución</a> · <a href="predictions.csv">Tabla de predicciones</a>. Los NPZ conservan las muestras. Cambiar un JSON de configuración no actualiza estos resultados: requiere ejecutar de nuevo el modelo.</p>`;
 }
